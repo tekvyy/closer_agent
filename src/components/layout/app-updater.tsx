@@ -8,6 +8,25 @@ import { getJobsActive } from "@/lib/tauri/commands";
 
 const FIRST_CHECK_DELAY_MS = 10_000;
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const CHECK_TIMEOUT_MS = 30_000;
+const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+const ATTEMPTS = 4;
+
+/**
+ * Some networks block one of GitHub's download servers, and a connection to it hangs
+ * instead of failing. Time out and retry: each attempt resolves the host again and
+ * usually lands on a reachable server.
+ */
+async function withRetries<T>(task: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await task();
+    } catch (error) {
+      if (attempt >= ATTEMPTS) throw error;
+      console.warn(`Update attempt ${attempt} failed, retrying:`, error);
+    }
+  }
+}
 
 async function installAndRestart(update: Update) {
   // Restarting kills running jobs, so let them finish first
@@ -51,16 +70,20 @@ export function AppUpdater() {
     if (import.meta.env.DEV) return;
 
     let downloaded = false;
+    let checking = false;
     const checkForUpdate = async () => {
-      if (downloaded) return;
+      if (downloaded || checking) return;
+      checking = true;
       try {
-        const update = await check();
+        const update = await withRetries(() => check({ timeout: CHECK_TIMEOUT_MS }));
         if (!update) return;
-        await update.download();
+        await withRetries(() => update.download(undefined, { timeout: DOWNLOAD_TIMEOUT_MS }));
         downloaded = true;
         offerRestart(update);
       } catch (error) {
         console.error("Update check failed:", error);
+      } finally {
+        checking = false;
       }
     };
 
