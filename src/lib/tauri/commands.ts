@@ -329,3 +329,20 @@ export interface CliInstallOutput {
 export async function installCli(provider: CliProvider): Promise<string> {
   return invoke("install_cli", { provider });
 }
+
+// ============================================================================
+// App update commands
+// ============================================================================
+
+/**
+ * Checks for a newer app version and downloads it. Resolves with the version ready to
+ * install, or null when the app is up to date.
+ */
+export async function downloadAppUpdate(): Promise<string | null> {
+  return invoke("download_app_update");
+}
+
+/** Installs the downloaded update and restarts the app into it */
+export async function installAppUpdate(): Promise<void> {
+  return invoke("install_app_update");
+}

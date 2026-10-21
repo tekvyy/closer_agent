@@ -1,22 +1,13 @@
 "use client";
 
 import { useEffect } from "react";
-import { check, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
 import { toast } from "sonner";
-import { getJobsActive } from "@/lib/tauri/commands";
+import { downloadAppUpdate, getJobsActive, installAppUpdate } from "@/lib/tauri/commands";
 
 const FIRST_CHECK_DELAY_MS = 10_000;
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
-const CHECK_TIMEOUT_MS = 30_000;
-const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
-const ATTEMPTS = 4;
+const ATTEMPTS = 3;
 
-/**
- * Some networks block one of GitHub's download servers, and a connection to it hangs
- * instead of failing. Time out and retry: each attempt resolves the host again and
- * usually lands on a reachable server.
- */
 async function withRetries<T>(task: () => Promise<T>): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -28,22 +19,21 @@ async function withRetries<T>(task: () => Promise<T>): Promise<T> {
   }
 }
 
-async function installAndRestart(update: Update) {
+async function installAndRestart(version: string) {
   // Restarting kills running jobs, so let them finish first
   const activeJobs = await getJobsActive().catch(() => []);
   if (activeJobs.length > 0) {
     toast.info("Research is still running", {
       description: `Restart once the ${activeJobs.length === 1 ? "job finishes" : `${activeJobs.length} jobs finish`} to install the update.`,
     });
-    offerRestart(update);
+    offerRestart(version);
     return;
   }
 
-  const installing = toast.loading(`Installing Closer ${update.version}…`);
+  const installing = toast.loading(`Installing Closer ${version}…`);
   try {
-    // On Windows this closes the app and the installer reopens it
-    await update.install();
-    await relaunch();
+    // Restarts into the new version; on Windows the installer closes and reopens the app
+    await installAppUpdate();
   } catch (error) {
     toast.error("The update couldn't be installed", {
       id: installing,
@@ -52,12 +42,12 @@ async function installAndRestart(update: Update) {
   }
 }
 
-function offerRestart(update: Update) {
-  toast.info(`Closer ${update.version} is ready`, {
+function offerRestart(version: string) {
+  toast.info(`Closer ${version} is ready`, {
     id: "app-update",
     description: "Restart to finish updating. It only takes a few seconds.",
     duration: Infinity,
-    action: { label: "Restart", onClick: () => void installAndRestart(update) },
+    action: { label: "Restart", onClick: () => void installAndRestart(version) },
   });
 }
 
@@ -75,11 +65,10 @@ export function AppUpdater() {
       if (downloaded || checking) return;
       checking = true;
       try {
-        const update = await withRetries(() => check({ timeout: CHECK_TIMEOUT_MS }));
-        if (!update) return;
-        await withRetries(() => update.download(undefined, { timeout: DOWNLOAD_TIMEOUT_MS }));
+        const version = await withRetries(downloadAppUpdate);
+        if (!version) return;
         downloaded = true;
-        offerRestart(update);
+        offerRestart(version);
       } catch (error) {
         console.error("Update check failed:", error);
       } finally {

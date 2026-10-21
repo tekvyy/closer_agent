@@ -37,6 +37,6 @@ which = "8"
 nix = { version = "0.31", features = ["signal"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-process = "2"
 tauri-plugin-shell = "2"
-tauri-plugin-updater = "2"
+# Pinned to a minor version because app_update.rs uses configure_client
+tauri-plugin-updater = "~2.14"

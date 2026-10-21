@@ -1,3 +1,4 @@
+mod app_update;
 mod cli_tools;
 mod commands;
 mod db;
@@ -20,7 +21,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Initialize database
             let db_path = get_db_path();
@@ -34,6 +34,7 @@ pub fn run() {
             // Initialize job queue
             let job_queue = JobQueue::new();
             app.manage(job_queue);
+            app.manage(app_update::PendingUpdate::default());
 
             // Run startup recovery for stale jobs and stuck entities
             jobs::recovery::recover_on_startup(&conn_for_recovery, app.handle());
@@ -150,6 +151,9 @@ pub fn run() {
             cli_tools::check_cli,
             cli_tools::open_cli_terminal,
             cli_tools::install_cli,
+            // App update commands
+            app_update::download_app_update,
+            app_update::install_app_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
