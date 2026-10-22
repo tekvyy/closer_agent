@@ -25,7 +25,7 @@ const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
 pub enum CliIssueKind {
     /// CLI is not installed or not on PATH
     Missing,
-    /// CLI is too old for the selected model
+    /// The CLI rejected the selected model, which usually means it's too old
     Outdated,
     /// CLI is installed but not signed in
     Login,
@@ -64,6 +64,8 @@ pub struct CliStatus {
     pub path: Option<String>,
     /// None when the sign-in state could not be determined
     pub logged_in: Option<bool>,
+    /// Installed version, e.g. "2.1.307"; None when it couldn't be read
+    pub version: Option<String>,
 }
 
 /// Windows: force-kill a process and its children. Agent CLIs installed through npm run
@@ -294,6 +296,7 @@ pub async fn check_cli(provider: Provider) -> Result<CliStatus, String> {
             found: false,
             path: None,
             logged_in: None,
+            version: None,
         });
     };
 
@@ -307,11 +310,30 @@ pub async fn check_cli(provider: Provider) -> Result<CliStatus, String> {
     command.creation_flags(CREATE_NO_WINDOW);
     let logged_in = command.output().await.ok().map(|o| o.status.success());
 
+    let mut command = tokio::process::Command::new(&path);
+    command.arg("--version").stdin(std::process::Stdio::null());
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let version = command
+        .output()
+        .await
+        .ok()
+        .and_then(|o| parse_version(&String::from_utf8_lossy(&o.stdout)));
+
     Ok(CliStatus {
         found: true,
         path: Some(path),
         logged_in,
+        version,
     })
+}
+
+/// "2.1.307 (Claude Code)" or "codex-cli 0.160.0" -> the version number
+fn parse_version(output: &str) -> Option<String> {
+    output
+        .split_whitespace()
+        .find(|word| word.starts_with(|c: char| c.is_ascii_digit()) && word.contains('.'))
+        .map(String::from)
 }
 
 /// Open a terminal window running the install / update / sign-in command, so the
@@ -537,7 +559,20 @@ fn open_terminal(script: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_issue, error_lines, CliIssueKind};
+    use super::{detect_issue, error_lines, parse_version, CliIssueKind};
+
+    #[test]
+    fn parses_cli_versions() {
+        assert_eq!(
+            parse_version("2.1.307 (Claude Code)\n").as_deref(),
+            Some("2.1.307")
+        );
+        assert_eq!(
+            parse_version("codex-cli 0.160.0").as_deref(),
+            Some("0.160.0")
+        );
+        assert_eq!(parse_version("error: unknown flag"), None);
+    }
 
     #[test]
     fn detects_outdated_codex_from_model_rejection() {

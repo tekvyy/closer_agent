@@ -131,7 +131,7 @@ export function ModelSelector() {
               </span>
             </DropdownMenuItem>
           ) : (
-            <DropdownMenuItem key={provider} onSelect={() => openCliDialog(provider, "outdated")}>
+            <DropdownMenuItem key={provider} onSelect={() => openCliDialog(provider, "update")}>
               <IconRefresh className="size-4" />
               <span>Update {CLI_NAMES[provider]}</span>
             </DropdownMenuItem>

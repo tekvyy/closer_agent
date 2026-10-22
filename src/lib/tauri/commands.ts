@@ -270,6 +270,8 @@ export async function deleteJob(jobId: string): Promise<void> {
 export interface Settings {
   model: string;
   useChrome: boolean;
+  /** Start the next research step automatically when one finishes */
+  autoResearch: boolean;
   updatedAt: number;
 }
 
@@ -281,6 +283,10 @@ export async function updateSettings(model: string, useChrome: boolean): Promise
   return invoke("update_settings", { model, useChrome });
 }
 
+export async function setAutoResearch(enabled: boolean): Promise<void> {
+  return invoke("set_auto_research", { enabled });
+}
+
 // ============================================================================
 // Agent CLI commands
 // ============================================================================
@@ -288,7 +294,11 @@ export async function updateSettings(model: string, useChrome: boolean): Promise
 /** Agent CLI that runs jobs: Claude Code, or Codex signed in with ChatGPT */
 export type CliProvider = "claude" | "codex";
 
-export type CliIssueKind = "missing" | "outdated" | "login" | "limit";
+/**
+ * Why the CLI dialog is open. "outdated" comes from a job whose model the CLI rejected;
+ * "update" is the user asking to update from the model menu.
+ */
+export type CliIssueKind = "missing" | "outdated" | "update" | "login" | "limit";
 
 export type CliAction = "install" | "update" | "login";
 
@@ -304,6 +314,8 @@ export interface CliStatus {
   path: string | null;
   /** null when the sign-in state could not be determined */
   loggedIn: boolean | null;
+  /** Installed version, e.g. "2.1.307"; null when it couldn't be read */
+  version: string | null;
 }
 
 export async function checkCli(provider: CliProvider): Promise<CliStatus> {

@@ -28,9 +28,10 @@ interface IssueCopy {
   action?: { type: CliAction; label: string };
 }
 
-function describeIssue({ provider, kind }: CliIssue): IssueCopy {
+function describeIssue({ provider, kind }: CliIssue, version: string | null): IssueCopy {
   const cli = CLI_NAMES[provider];
   const account = ACCOUNT_NAMES[provider];
+  const installed = version ? `${cli} ${version}` : cli;
 
   switch (kind) {
     case "missing":
@@ -41,8 +42,14 @@ function describeIssue({ provider, kind }: CliIssue): IssueCopy {
       };
     case "outdated":
       return {
-        title: `${cli} needs an update`,
-        description: `Your ${cli} CLI is too old for the selected model. Click Update and Closer updates it for you, then run the job again.`,
+        title: `${cli} couldn't use this model`,
+        description: `${installed} rejected the selected model. Updating ${cli} usually fixes this: click Update, then run the job again. If you already have the newest version, your ${account} account may not have this model; pick another one in the sidebar.`,
+        action: { type: "update", label: "Update" },
+      };
+    case "update":
+      return {
+        title: `Update ${cli}`,
+        description: `${version ? `You have ${cli} ${version}. ` : ""}Click Update to install the newest version. If you already have it, nothing changes.`,
         action: { type: "update", label: "Update" },
       };
     case "login":
@@ -76,6 +83,7 @@ export function CliIssueDialog() {
   const isInitialized = useSettingsStore((state) => state.isInitialized);
   const provider = useSettingsStore((state) => providerOf(state.selectedModel));
   const refreshCliStatus = useSettingsStore((state) => state.refreshCliStatus);
+  const cliStatus = useSettingsStore((state) => state.cliStatus);
 
   // Failed jobs report fixable CLI problems through this event
   useEffect(() => {
@@ -136,12 +144,14 @@ export function CliIssueDialog() {
   }, [isInitialized, refreshCliStatus]);
 
   if (!issue) return null;
-  const copy = describeIssue(issue);
+  const copy = describeIssue(issue, cliStatus[issue.provider]?.version ?? null);
   const action = copy.action;
   const cli = CLI_NAMES[issue.provider];
 
   const handleInstall = async () => {
     const installing = issue;
+    const name = CLI_NAMES[installing.provider];
+    const previousVersion = cliStatus[installing.provider]?.version ?? null;
     setIsInstalling(true);
     setInstallLog([]);
     setInstallError(null);
@@ -149,7 +159,20 @@ export function CliIssueDialog() {
       await installCli(installing.provider);
       await refreshCliStatus();
       const status = useSettingsStore.getState().cliStatus[installing.provider];
-      if (status?.loggedIn === false) {
+      const version = status?.version ?? null;
+      const wasUpdate = installing.kind === "update" || installing.kind === "outdated";
+      if (wasUpdate && version && version === previousVersion) {
+        toast.success(`${name} ${version} is already the newest version`, {
+          description:
+            installing.kind === "outdated"
+              ? `So the update can't fix this model. Pick another model in the sidebar.`
+              : undefined,
+        });
+        setIssue(null);
+      } else if (wasUpdate && version) {
+        toast.success(`${name} updated to ${version}`);
+        setIssue(null);
+      } else if (status?.loggedIn === false) {
         toast.success(`${CLI_NAMES[installing.provider]} is installed`, {
           description: `Now sign in with your ${ACCOUNT_NAMES[installing.provider]} account.`,
         });
