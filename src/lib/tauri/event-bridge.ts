@@ -4,6 +4,8 @@ import { queryClient } from "@/lib/query/query-client";
 import { queryKeys } from "@/lib/query/keys";
 import { getJobLogs, getJobsActive } from "./commands";
 import { parseJobLogs } from "@/lib/stream/job-log-parser";
+import { handleStreamEvent } from "@/lib/stream/handle-stream-event";
+import type { StreamEvent } from "./types";
 
 // Event payload types from backend
 interface LeadCreatedPayload {
@@ -47,6 +49,8 @@ interface JobCreatedPayload {
   jobType: string;
   entityId: number;
   entityLabel: string;
+  /** Started by autopilot rather than by the user */
+  background: boolean;
 }
 
 let unlisteners: UnlistenFn[] = [];
@@ -138,13 +142,14 @@ export async function initializeEventBridge(): Promise<void> {
 
   // Job created → set active tab, open panel, invalidate jobs query
   const jobCreatedUnlisten = await listen<JobCreatedPayload>("job-created", (event) => {
-    const { jobId } = event.payload;
+    const { jobId, background } = event.payload;
 
-    const store = useStreamPanelStore.getState();
-
-    // Set this job as active and open the panel
-    store.setActiveTab(jobId);
-    store.setOpen(true);
+    // Autopilot jobs join the tab list without pulling the user away from what they watch
+    if (!background) {
+      const store = useStreamPanelStore.getState();
+      store.setActiveTab(jobId);
+      store.setOpen(true);
+    }
 
     // Invalidate jobs query so the new job appears in the tab list
     queryClient.invalidateQueries({ queryKey: queryKeys.jobsRecent(50) });
@@ -166,6 +171,12 @@ export async function initializeEventBridge(): Promise<void> {
     }
   );
   unlisteners.push(jobStatusChangedUnlisten);
+
+  // Output of autopilot jobs, which have no page-held channel to stream through
+  const jobStreamUnlisten = await listen<StreamEvent>("job-stream", (event) => {
+    handleStreamEvent(event.payload);
+  });
+  unlisteners.push(jobStreamUnlisten);
 
   isInitialized = true;
 

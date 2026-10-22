@@ -20,12 +20,23 @@ pub struct ResearchResult {
 #[tauri::command]
 pub async fn start_research(
     app: AppHandle,
-    state: State<'_, DbState>,
-    queue: State<'_, JobQueue>,
     lead_id: i64,
     custom_prompt: Option<String>,
     on_event: Channel<StreamEvent>,
 ) -> Result<ResearchResult, String> {
+    queue_company_research(app, lead_id, custom_prompt, on_event, false).await
+}
+
+/// Research a company and find its key people
+pub async fn queue_company_research(
+    app: AppHandle,
+    lead_id: i64,
+    custom_prompt: Option<String>,
+    on_event: Channel<StreamEvent>,
+    background: bool,
+) -> Result<ResearchResult, String> {
+    let state = app.state::<DbState>();
+    let queue = app.state::<JobQueue>();
     // Check for existing active job and cancel it if found
     let existing_job_id = {
         let conn = state.conn.lock().map_err(|e| e.to_string())?;
@@ -129,6 +140,7 @@ pub async fn start_research(
         primary_output_path: profile_path,
         secondary_output_path: Some(people_path),
         enrichment_output_path: Some(enrichment_path),
+        background,
     };
 
     // Clone the app handle for the callback
@@ -167,12 +179,22 @@ pub async fn start_research(
 #[tauri::command]
 pub async fn start_person_research(
     app: AppHandle,
-    state: State<'_, DbState>,
-    queue: State<'_, JobQueue>,
     person_id: i64,
     custom_prompt: Option<String>,
     on_event: Channel<StreamEvent>,
 ) -> Result<ResearchResult, String> {
+    queue_person_research(app, person_id, custom_prompt, on_event, false).await
+}
+
+pub async fn queue_person_research(
+    app: AppHandle,
+    person_id: i64,
+    custom_prompt: Option<String>,
+    on_event: Channel<StreamEvent>,
+    background: bool,
+) -> Result<ResearchResult, String> {
+    let state = app.state::<DbState>();
+    let queue = app.state::<JobQueue>();
     // Check for existing active job and cancel it if found
     let existing_job_id = {
         let conn = state.conn.lock().map_err(|e| e.to_string())?;
@@ -282,6 +304,7 @@ pub async fn start_person_research(
         primary_output_path: profile_path,
         secondary_output_path: None,
         enrichment_output_path: Some(enrichment_path),
+        background,
     };
 
     let entity_label = full_name.clone();
@@ -392,6 +415,13 @@ pub async fn get_active_jobs(queue: State<'_, JobQueue>) -> Result<Vec<String>, 
 // ============================================================================
 
 const PEOPLE_JSON_SCHEMA: &str = r#"
+For the people JSON, find the 3-6 people at this company who would decide on or champion
+buying what we sell (see the Company Overview, if given): typically the founder or CEO for
+small companies, and the relevant department heads and VPs for larger ones. Only include
+people you found evidence for (the company website, LinkedIn, press, conference talks) who
+still work there. Include their LinkedIn URL whenever you find it, and never guess emails.
+Write an empty array if you can't find anyone reliable.
+
 The people JSON should be an array of objects with these fields:
 - firstName (string)
 - lastName (string)
@@ -554,10 +584,20 @@ pub async fn start_find_leads(
     icp_description: String,
     on_event: Channel<StreamEvent>,
 ) -> Result<ResearchResult, String> {
-    // Get company overview for context
-    let company_overview = {
+    // Get company overview for context, and the companies we already have so the search
+    // spends its time on new ones
+    let (company_overview, existing_companies) = {
         let conn = state.conn.lock().map_err(|e| e.to_string())?;
-        db::get_prompt_by_type(&conn, "company_overview").map_err(|e| e.to_string())?
+        let overview =
+            db::get_prompt_by_type(&conn, "company_overview").map_err(|e| e.to_string())?;
+        let existing = conn
+            .prepare("SELECT company_name FROM leads ORDER BY created_at DESC LIMIT 300")
+            .and_then(|mut stmt| {
+                stmt.query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .map_err(|e| e.to_string())?;
+        (overview, existing)
     };
 
     // Set up output directory
@@ -576,6 +616,7 @@ pub async fn start_find_leads(
         &icp_description,
         &leads_path,
         company_overview.as_ref().map(|p| p.content.as_str()),
+        &existing_companies,
     );
 
     // Send initial event
@@ -597,6 +638,7 @@ pub async fn start_find_leads(
         primary_output_path: leads_path,
         secondary_output_path: None,
         enrichment_output_path: None,
+        background: false,
     };
 
     let entity_label = format!(
@@ -633,6 +675,7 @@ fn build_find_leads_prompt(
     icp_description: &str,
     output_path: &std::path::Path,
     company_overview: Option<&str>,
+    existing_companies: &[String],
 ) -> String {
     let mut prompt = String::new();
 
@@ -680,6 +723,15 @@ IMPORTANT: Write ONLY valid JSON to the output file. No markdown, no explanation
         output_path = output_path.display(),
     ));
 
+    if !existing_companies.is_empty() {
+        prompt.push_str(
+            "\n\n## Already in Our List\n\nThese companies are already in our list. Don't include them; find different ones:\n",
+        );
+        for name in existing_companies {
+            prompt.push_str(&format!("- {name}\n"));
+        }
+    }
+
     prompt
 }
 
@@ -690,11 +742,20 @@ IMPORTANT: Write ONLY valid JSON to the output file. No markdown, no explanation
 #[tauri::command]
 pub async fn start_scoring(
     app: AppHandle,
-    state: State<'_, DbState>,
-    queue: State<'_, JobQueue>,
     lead_id: i64,
     on_event: Channel<StreamEvent>,
 ) -> Result<ResearchResult, String> {
+    queue_scoring(app, lead_id, on_event, false).await
+}
+
+pub async fn queue_scoring(
+    app: AppHandle,
+    lead_id: i64,
+    on_event: Channel<StreamEvent>,
+    background: bool,
+) -> Result<ResearchResult, String> {
+    let state = app.state::<DbState>();
+    let queue = app.state::<JobQueue>();
     // Check for existing active job and cancel it if found
     let existing_job_id = {
         let conn = state.conn.lock().map_err(|e| e.to_string())?;
@@ -766,6 +827,7 @@ pub async fn start_scoring(
         primary_output_path: score_path,
         secondary_output_path: None,
         enrichment_output_path: None,
+        background,
     };
 
     let entity_label = format!("{} (Scoring)", lead.company_name);
@@ -800,11 +862,20 @@ pub async fn start_scoring(
 #[tauri::command]
 pub async fn start_conversation_generation(
     app: AppHandle,
-    state: State<'_, DbState>,
-    queue: State<'_, JobQueue>,
     person_id: i64,
     on_event: Channel<StreamEvent>,
 ) -> Result<ResearchResult, String> {
+    queue_conversation(app, person_id, on_event, false).await
+}
+
+pub async fn queue_conversation(
+    app: AppHandle,
+    person_id: i64,
+    on_event: Channel<StreamEvent>,
+    background: bool,
+) -> Result<ResearchResult, String> {
+    let state = app.state::<DbState>();
+    let queue = app.state::<JobQueue>();
     // Check for existing active job and cancel it if found
     let existing_job_id = {
         let conn = state.conn.lock().map_err(|e| e.to_string())?;
@@ -896,6 +967,7 @@ pub async fn start_conversation_generation(
         primary_output_path: conversation_path,
         secondary_output_path: None,
         enrichment_output_path: None,
+        background,
     };
 
     let entity_label = format!("{} (Conversation)", full_name);

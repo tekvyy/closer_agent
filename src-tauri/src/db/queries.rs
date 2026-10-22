@@ -1156,8 +1156,9 @@ pub fn delete_job(conn: &Connection, job_id: &str) -> SqliteResult<()> {
 // ============================================================================
 
 pub fn get_settings(conn: &Connection) -> SqliteResult<Settings> {
-    let mut stmt =
-        conn.prepare("SELECT model, use_chrome, updated_at FROM settings WHERE id = 1")?;
+    let mut stmt = conn.prepare(
+        "SELECT model, use_chrome, auto_research, updated_at FROM settings WHERE id = 1",
+    )?;
 
     let mut rows = stmt.query([])?;
 
@@ -1165,13 +1166,15 @@ pub fn get_settings(conn: &Connection) -> SqliteResult<Settings> {
         Ok(Settings {
             model: row.get(0)?,
             use_chrome: row.get::<_, i64>(1)? != 0,
-            updated_at: row.get(2)?,
+            auto_research: row.get::<_, i64>(2)? != 0,
+            updated_at: row.get(3)?,
         })
     } else {
         // Return defaults if no settings exist
         Ok(Settings {
             model: crate::model_config::default_model().to_string(),
             use_chrome: false,
+            auto_research: true,
             updated_at: chrono::Utc::now().timestamp_millis(),
         })
     }
@@ -1184,14 +1187,24 @@ pub fn update_settings(conn: &Connection, model: &str, use_chrome: bool) -> Sqli
         model, use_chrome
     );
     let rows_affected = conn.execute(
-        "INSERT OR REPLACE INTO settings (id, model, use_chrome, updated_at)
-         VALUES (1, ?1, ?2, ?3)",
+        // Upsert rather than REPLACE so columns not set here keep their values
+        "INSERT INTO settings (id, model, use_chrome, updated_at) VALUES (1, ?1, ?2, ?3)
+         ON CONFLICT(id) DO UPDATE SET
+            model = excluded.model, use_chrome = excluded.use_chrome, updated_at = excluded.updated_at",
         params![model, use_chrome as i64, now],
     )?;
     eprintln!(
         "[db] UPDATE settings completed: {} rows affected",
         rows_affected
     );
+    Ok(())
+}
+
+pub fn set_auto_research(conn: &Connection, enabled: bool) -> SqliteResult<()> {
+    conn.execute(
+        "UPDATE settings SET auto_research = ?1, updated_at = ?2 WHERE id = 1",
+        params![enabled as i64, chrono::Utc::now().timestamp_millis()],
+    )?;
     Ok(())
 }
 

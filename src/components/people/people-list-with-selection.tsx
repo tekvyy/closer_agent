@@ -9,7 +9,7 @@ import {
   startPersonResearch,
   startConversationGeneration,
 } from "@/lib/tauri/commands";
-import { handleStreamEvent } from "@/lib/stream/handle-stream-event";
+import { startForEach } from "@/lib/research/start-for-each";
 import {
   PERSON_USER_STATUS_CONFIG,
   PERSON_USER_STATUS_ORDER,
@@ -53,81 +53,24 @@ export function PeopleListWithSelection({
   }, [groupedPeople]);
 
   const handleResearch = useCallback(
-    async (selectedIds: number[]) => {
-      const promises: Promise<boolean>[] = [];
-      for (const personId of selectedIds) {
-        if (!personMap.has(personId)) continue;
-        promises.push(
-          (async () => {
-            try {
-              await startPersonResearch(personId, handleStreamEvent);
-              return true;
-            } catch (error) {
-              console.error(`Failed to start research for person ${personId}:`, error);
-              return false;
-            }
-          })()
-        );
-      }
-      const results = await Promise.all(promises);
-
-      let started = 0;
-      let failed = 0;
-      for (const ok of results) {
-        if (ok) started++;
-        else failed++;
-      }
-
-      if (started > 0) {
-        toast.success(`Started research for ${started} ${started > 1 ? "people" : "person"}`);
-      }
-      if (failed > 0) {
-        toast.error(`Failed to start research for ${failed} ${failed > 1 ? "people" : "person"}`);
-      }
-    },
+    (selectedIds: number[]) =>
+      startForEach(
+        selectedIds.filter((id) => personMap.has(id)),
+        startPersonResearch,
+        "research",
+        ["person", "people"]
+      ),
     [personMap]
   );
 
   const handleConversation = useCallback(
-    async (selectedIds: number[]) => {
-      const promises: Promise<boolean>[] = [];
-      for (const personId of selectedIds) {
-        if (!personMap.has(personId)) continue;
-        promises.push(
-          (async () => {
-            try {
-              await startConversationGeneration(personId, handleStreamEvent);
-              return true;
-            } catch (error) {
-              console.error(
-                `Failed to start conversation generation for person ${personId}:`,
-                error
-              );
-              return false;
-            }
-          })()
-        );
-      }
-      const results = await Promise.all(promises);
-
-      let started = 0;
-      let failed = 0;
-      for (const ok of results) {
-        if (ok) started++;
-        else failed++;
-      }
-
-      if (started > 0) {
-        toast.success(
-          `Started conversation generation for ${started} ${started > 1 ? "people" : "person"}`
-        );
-      }
-      if (failed > 0) {
-        toast.error(
-          `Failed to start conversation generation for ${failed} ${failed > 1 ? "people" : "person"}`
-        );
-      }
-    },
+    (selectedIds: number[]) =>
+      startForEach(
+        selectedIds.filter((id) => personMap.has(id)),
+        startConversationGeneration,
+        "conversation generation",
+        ["person", "people"]
+      ),
     [personMap]
   );
 

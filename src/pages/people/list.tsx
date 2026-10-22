@@ -2,7 +2,9 @@ import { Button } from "@/components/ui/button";
 import { IconSearch, IconUsers, IconLoader2 } from "@tabler/icons-react";
 import { AddPersonModal } from "@/components/people/add-person-modal";
 import { PeopleListWithSelection } from "@/components/people/people-list-with-selection";
+import { ResearchAllButton } from "@/components/research/research-all-button";
 import { useAllPeople, useLeadsForSelect } from "@/lib/hooks/use-people";
+import { startPersonResearch } from "@/lib/tauri/commands";
 import type { PersonWithCompany } from "@/lib/tauri/types";
 import {
   PERSON_USER_STATUS_ORDER,
@@ -41,6 +43,10 @@ export default function PeopleListPage() {
     groupedPeople[status].push(personForList as PersonWithCompany);
   }
 
+  const unresearchedIds = people
+    .filter((person) => person.researchStatus === "pending")
+    .map((person) => person.id);
+
   if (isLoading && people.length === 0) {
     return (
       <>
@@ -71,6 +77,11 @@ export default function PeopleListPage() {
           <span>All People</span>
         </div>
         <div className="flex-1" />
+        <ResearchAllButton
+          ids={unresearchedIds}
+          start={startPersonResearch}
+          noun={["person", "people"]}
+        />
         <AddPersonModal leads={leads} onSuccess={refresh} />
       </header>
 

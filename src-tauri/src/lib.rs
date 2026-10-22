@@ -1,4 +1,5 @@
 mod app_update;
+mod autopilot;
 mod cli_tools;
 mod commands;
 mod db;
@@ -147,6 +148,7 @@ pub fn run() {
             // Settings commands
             commands::get_settings,
             commands::update_settings,
+            commands::set_auto_research,
             // Agent CLI commands
             cli_tools::check_cli,
             cli_tools::open_cli_terminal,

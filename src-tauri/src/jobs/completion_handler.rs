@@ -10,6 +10,7 @@
 
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -579,12 +580,43 @@ impl CompletionHandler {
             }
             ParsedOutput::LeadFinder { leads } => {
                 let now = chrono::Utc::now().timestamp();
+
+                // Skip companies we already have, matched by name or website domain
+                let mut known_names = HashSet::new();
+                let mut known_domains = HashSet::new();
+                {
+                    let mut stmt = tx
+                        .prepare("SELECT company_name, website FROM leads")
+                        .map_err(|e| CompletionError::DatabaseError(e.to_string()))?;
+                    let rows = stmt
+                        .query_map([], |row| {
+                            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                        })
+                        .map_err(|e| CompletionError::DatabaseError(e.to_string()))?;
+                    for (name, website) in rows.flatten() {
+                        known_names.insert(name.trim().to_lowercase());
+                        if let Some(domain) = website.as_deref().and_then(website_domain) {
+                            known_domains.insert(domain);
+                        }
+                    }
+                }
+
                 for lead_data in leads {
                     let company_name = lead_data
                         .get("companyName")
                         .and_then(|v| v.as_str())
                         .unwrap_or("Unknown");
                     let website = lead_data.get("website").and_then(|v| v.as_str());
+                    let domain = website.and_then(website_domain);
+                    let is_new_name = known_names.insert(company_name.trim().to_lowercase());
+                    let is_new_domain = domain.is_none_or(|d| known_domains.insert(d));
+                    if !is_new_name || !is_new_domain {
+                        eprintln!(
+                            "[completion_handler] Skipping {} (already in the lead list)",
+                            company_name
+                        );
+                        continue;
+                    }
                     let city = lead_data.get("city").and_then(|v| v.as_str());
                     let state = lead_data.get("state").and_then(|v| v.as_str());
                     let country = lead_data.get("country").and_then(|v| v.as_str());
@@ -712,6 +744,15 @@ impl CompletionHandler {
 }
 
 /// Helper to extract first name from people JSON
+/// "https://www.Acme.com/about" -> "acme.com"
+fn website_domain(website: &str) -> Option<String> {
+    let rest = website.trim().to_lowercase();
+    let rest = rest.split("://").last().unwrap_or_default();
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = host.strip_prefix("www.").unwrap_or(host);
+    (!host.is_empty()).then(|| host.to_string())
+}
+
 fn extract_first_name(p: &serde_json::Value) -> String {
     if let Some(fn_val) = p.get("firstName").and_then(|v| v.as_str()) {
         fn_val.to_string()
@@ -732,5 +773,24 @@ fn extract_last_name(p: &serde_json::Value) -> String {
         parts.get(1..).unwrap_or(&[]).join(" ")
     } else {
         String::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::website_domain;
+
+    #[test]
+    fn website_domain_normalizes_urls() {
+        assert_eq!(
+            website_domain("https://www.Acme.com/about").as_deref(),
+            Some("acme.com")
+        );
+        assert_eq!(website_domain("acme.com").as_deref(), Some("acme.com"));
+        assert_eq!(
+            website_domain("http://shop.acme.co.uk?ref=x").as_deref(),
+            Some("shop.acme.co.uk")
+        );
+        assert_eq!(website_domain("  "), None);
     }
 }

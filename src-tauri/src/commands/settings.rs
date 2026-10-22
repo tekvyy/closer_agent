@@ -35,3 +35,9 @@ pub fn update_settings(
     eprintln!("[settings] Successfully updated settings");
     Ok(())
 }
+
+#[tauri::command]
+pub fn set_auto_research(state: State<'_, DbState>, enabled: bool) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    db::set_auto_research(&conn, enabled).map_err(|e| e.to_string())
+}

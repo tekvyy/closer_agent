@@ -236,5 +236,7 @@ pub struct JobLog {
 pub struct Settings {
     pub model: String,
     pub use_chrome: bool,
+    /// Chain the next research step automatically when one finishes
+    pub auto_research: bool,
     pub updated_at: i64,
 }

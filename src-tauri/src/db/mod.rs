@@ -40,7 +40,7 @@ impl DbState {
 }
 
 /// Initialize the database schema
-fn init_schema(conn: &Connection) -> SqliteResult<()> {
+pub(crate) fn init_schema(conn: &Connection) -> SqliteResult<()> {
     // Create tables first
     conn.execute_batch(
         r#"
@@ -173,6 +173,7 @@ fn init_schema(conn: &Connection) -> SqliteResult<()> {
             id INTEGER PRIMARY KEY CHECK (id = 1),
             model TEXT NOT NULL DEFAULT 'claude-sonnet-5-5',
             use_chrome INTEGER NOT NULL DEFAULT 0,
+            auto_research INTEGER NOT NULL DEFAULT 1,
             updated_at INTEGER NOT NULL
         );
 
@@ -219,6 +220,14 @@ fn run_migrations(conn: &Connection) -> SqliteResult<()> {
 
     if !column_exists(conn, "leads", "notes") {
         conn.execute("ALTER TABLE leads ADD COLUMN notes TEXT", [])?;
+    }
+
+    // Databases from before autopilot; new ones get the column from CREATE TABLE
+    if column_exists(conn, "settings", "id") && !column_exists(conn, "settings", "auto_research") {
+        conn.execute(
+            "ALTER TABLE settings ADD COLUMN auto_research INTEGER NOT NULL DEFAULT 1",
+            [],
+        )?;
     }
 
     // Helper to check if a column has NOT NULL constraint

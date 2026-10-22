@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { IconSearch, IconLoader2 } from "@tabler/icons-react";
 import { startFindLeads } from "@/lib/tauri/commands";
 import { handleStreamEvent } from "@/lib/stream/handle-stream-event";
+import { useSettingsStore } from "@/lib/store/settings-store";
 import { toast } from "sonner";
 
 interface FindLeadsModalProps {
@@ -25,6 +26,7 @@ export function FindLeadsModal({ onSuccess }: FindLeadsModalProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [icpDescription, setIcpDescription] = useState("");
+  const autoResearch = useSettingsStore((state) => state.autoResearch);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,6 +69,12 @@ export function FindLeadsModal({ onSuccess }: FindLeadsModalProps) {
               rows={4}
               required
             />
+            {autoResearch && (
+              <p className="text-xs text-muted-foreground">
+                Autopilot is on: every company found is researched, scored, and its key people get
+                profiles and talking points, without any more clicks.
+              </p>
+            )}
           </div>
           <DialogFooter>
             <Button type="submit" disabled={loading || !icpDescription.trim()}>

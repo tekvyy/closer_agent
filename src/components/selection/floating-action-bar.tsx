@@ -15,6 +15,9 @@ export function FloatingActionBar({ actions }: FloatingActionBarProps) {
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
   const selectedCount = useSelectionStore((state) => state.getSelectedCount());
   const clearAll = useSelectionStore((state) => state.clearAll);
+  const getSelectedIds = useSelectionStore((state) => state.getSelectedIds);
+  // Everyday actions get their own button; the rest stay in the menu
+  const quickActions = actions.filter((action) => !action.destructive);
 
   const isVisible = selectedCount > 0;
 
@@ -56,13 +59,29 @@ export function FloatingActionBar({ actions }: FloatingActionBarProps) {
 
             <div className="h-4 w-px bg-border mx-1" />
 
+            {quickActions.map((action) => {
+              const Icon = action.icon;
+              return (
+                <Button
+                  key={action.id}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void action.onExecute(getSelectedIds())}
+                  className="gap-1.5 rounded"
+                >
+                  <Icon className="size-3.5" />
+                  {action.label}
+                </Button>
+              );
+            })}
+
             <Button
               variant="outline"
               size="sm"
               onClick={() => setCommandMenuOpen(true)}
               className="gap-1.5 rounded"
             >
-              Actions
+              More
               <kbd className="ml-1 text-[10px] text-muted-foreground bg-muted rounded px-1 py-0.5 flex items-center gap-1">
                 <IconCommand className="size-3" /> K
               </kbd>

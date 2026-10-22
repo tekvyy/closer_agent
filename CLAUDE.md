@@ -75,6 +75,8 @@ Research/scoring jobs spawn Claude CLI subprocesses:
 - 10-minute timeout per job
 - Output streams to frontend via Tauri channels
 - Results parsed and stored in SQLite on completion
+- Jobs past the concurrency limit wait in the queue for a free slot
+- Autopilot (`src-tauri/src/autopilot.rs`, `auto_research` setting): a finished job queues the next step (find leads → company research → scoring + people research → talking points)
 
 ### Key Patterns
 

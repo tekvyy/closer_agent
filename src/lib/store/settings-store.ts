@@ -4,6 +4,7 @@ import {
   checkCli,
   getSettings,
   updateSettings as updateSettingsCmd,
+  setAutoResearch as setAutoResearchCmd,
   type CliIssue,
   type CliProvider,
   type CliStatus,
@@ -63,6 +64,8 @@ export function providerOf(model: ModelId): ModelProvider {
 interface SettingsState {
   selectedModel: ModelId;
   useChrome: boolean;
+  /** Autopilot: chain research, scoring, people and talking points */
+  autoResearch: boolean;
   isLoading: boolean;
   isInitialized: boolean;
   isUpdatingModel: boolean;
@@ -77,11 +80,13 @@ interface SettingsState {
   refreshCliStatus: () => Promise<void>;
   setSelectedModel: (model: ModelId) => Promise<void>;
   setUseChrome: (useChrome: boolean) => Promise<void>;
+  setAutoResearch: (enabled: boolean) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
   selectedModel: DEFAULT_MODEL,
   useChrome: false,
+  autoResearch: true,
   isLoading: false,
   isInitialized: false,
   isUpdatingModel: false,
@@ -100,6 +105,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       set({
         selectedModel: isModelId(settings.model) ? settings.model : DEFAULT_MODEL,
         useChrome: settings.useChrome,
+        autoResearch: settings.autoResearch,
         isInitialized: true,
       });
     } catch (error) {
@@ -209,6 +215,23 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       });
     } finally {
       set({ isUpdatingChrome: false });
+    }
+  },
+
+  setAutoResearch: async (enabled: boolean) => {
+    const previous = get().autoResearch;
+    set({ autoResearch: enabled });
+    try {
+      await setAutoResearchCmd(enabled);
+      toast.success(enabled ? "Autopilot on" : "Autopilot off", {
+        description: enabled
+          ? "Finished research now starts scoring, people research and talking points."
+          : "Each research step now waits for you to start it.",
+      });
+    } catch (error) {
+      console.error("Failed to update autopilot setting:", error);
+      set({ autoResearch: previous });
+      toast.error("Couldn't change autopilot", { description: String(error) });
     }
   },
 }));

@@ -93,6 +93,7 @@ pub struct JobCreatedPayload {
     pub job_type: String,
     pub entity_id: i64,
     pub entity_label: String,
+    pub background: bool,
 }
 
 pub fn emit_job_status_changed(
@@ -128,6 +129,7 @@ pub fn emit_job_created(
     job_type: String,
     entity_id: i64,
     entity_label: String,
+    background: bool,
 ) {
     let _ = app.emit(
         "job-created",
@@ -136,6 +138,7 @@ pub fn emit_job_created(
             job_type,
             entity_id,
             entity_label,
+            background,
         },
     );
 }

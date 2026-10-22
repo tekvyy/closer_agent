@@ -4,7 +4,9 @@ import { AddLeadModal } from "@/components/leads/add-lead-modal";
 import { FindLeadsModal } from "@/components/leads/find-leads-modal";
 import { ClearLeadsModal } from "@/components/leads/clear-leads-modal";
 import { LeadListWithSelection } from "@/components/leads/lead-list-with-selection";
+import { ResearchAllButton } from "@/components/research/research-all-button";
 import { useLeadsWithScores } from "@/lib/hooks/use-leads";
+import { startResearch } from "@/lib/tauri/commands";
 import type { LeadWithScore } from "@/lib/tauri/types";
 
 // Helper to group leads by user status
@@ -56,6 +58,9 @@ export default function LeadListPage() {
 
   const groupedLeads = groupByUserStatus(leads);
   const tierCounts = getTierCounts(leads);
+  const unresearchedIds = leads
+    .filter((lead) => lead.researchStatus === "pending")
+    .map((lead) => lead.id);
 
   if (isLoading && leads.length === 0) {
     return (
@@ -77,6 +82,7 @@ export default function LeadListPage() {
         </div>
         <div className="flex-1" data-tauri-drag-region />
         <ClearLeadsModal leadIds={leads.map((lead) => lead.id)} onSuccess={refresh} />
+        <ResearchAllButton ids={unresearchedIds} start={startResearch} noun={["lead", "leads"]} />
         <FindLeadsModal onSuccess={refresh} />
         <AddLeadModal onSuccess={refresh} />
       </header>

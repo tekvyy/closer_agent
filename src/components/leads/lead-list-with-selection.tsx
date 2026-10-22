@@ -8,7 +8,7 @@ import { ResearchStatusBadge } from "@/components/status/research-status-badge";
 import { toast } from "sonner";
 import { useSelectionStore } from "@/lib/store/selection-store";
 import { deleteLeads, startResearch, startScoring } from "@/lib/tauri/commands";
-import { handleStreamEvent } from "@/lib/stream/handle-stream-event";
+import { startForEach } from "@/lib/research/start-for-each";
 import type { LeadScore } from "@/lib/tauri/types";
 import {
   LEAD_USER_STATUS_ORDER,
@@ -46,74 +46,24 @@ export function LeadListWithSelection({ groupedLeads, onRefresh }: LeadListWithS
   }, [groupedLeads]);
 
   const handleResearch = React.useCallback(
-    async (selectedIds: number[]) => {
-      const promises: Promise<boolean>[] = [];
-      for (const leadId of selectedIds) {
-        if (!leadMap.has(leadId)) continue;
-        promises.push(
-          (async () => {
-            try {
-              await startResearch(leadId, handleStreamEvent);
-              return true;
-            } catch (error) {
-              console.error(`Failed to start research for lead ${leadId}:`, error);
-              return false;
-            }
-          })()
-        );
-      }
-      const results = await Promise.all(promises);
-
-      let started = 0;
-      let failed = 0;
-      for (const ok of results) {
-        if (ok) started++;
-        else failed++;
-      }
-
-      if (started > 0) {
-        toast.success(`Started research for ${started} lead${started > 1 ? "s" : ""}`);
-      }
-      if (failed > 0) {
-        toast.error(`Failed to start research for ${failed} lead${failed > 1 ? "s" : ""}`);
-      }
-    },
+    (selectedIds: number[]) =>
+      startForEach(
+        selectedIds.filter((id) => leadMap.has(id)),
+        startResearch,
+        "research",
+        ["lead", "leads"]
+      ),
     [leadMap]
   );
 
   const handleScore = React.useCallback(
-    async (selectedIds: number[]) => {
-      const promises: Promise<boolean>[] = [];
-      for (const leadId of selectedIds) {
-        if (!leadMap.has(leadId)) continue;
-        promises.push(
-          (async () => {
-            try {
-              await startScoring(leadId, handleStreamEvent);
-              return true;
-            } catch (error) {
-              console.error(`Failed to start scoring for lead ${leadId}:`, error);
-              return false;
-            }
-          })()
-        );
-      }
-      const results = await Promise.all(promises);
-
-      let started = 0;
-      let failed = 0;
-      for (const ok of results) {
-        if (ok) started++;
-        else failed++;
-      }
-
-      if (started > 0) {
-        toast.success(`Started scoring for ${started} lead${started > 1 ? "s" : ""}`);
-      }
-      if (failed > 0) {
-        toast.error(`Failed to start scoring for ${failed} lead${failed > 1 ? "s" : ""}`);
-      }
-    },
+    (selectedIds: number[]) =>
+      startForEach(
+        selectedIds.filter((id) => leadMap.has(id)),
+        startScoring,
+        "scoring",
+        ["lead", "leads"]
+      ),
     [leadMap]
   );
 

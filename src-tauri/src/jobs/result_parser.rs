@@ -26,4 +26,6 @@ pub struct JobMetadata {
     pub secondary_output_path: Option<PathBuf>,
     /// For CompanyResearch/PersonResearch: enrichment.json path for structured data
     pub enrichment_output_path: Option<PathBuf>,
+    /// Started by autopilot rather than by the user, so the UI doesn't switch to it
+    pub background: bool,
 }
