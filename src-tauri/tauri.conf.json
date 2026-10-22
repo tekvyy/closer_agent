@@ -31,7 +31,7 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIwRDdGMUJDMDFGQURDMkIKUldRcjNQb0J2UEhYc052c1ZjaXdCOWpURHRZY0tQWkpRK1dVWWIyNkx2VlN0OW90NzFCcTl6RmMK",
-      "endpoints": ["https://github.com/tekvyy/closers/releases/latest/download/latest.json"],
+      "endpoints": ["https://github.com/tekvyy/closer_agent/releases/latest/download/latest.json"],
       "windows": {
         "installMode": "passive"
       }

@@ -29,7 +29,7 @@ awk -v v="$version" '!done && /^version = / { print "version = \"" v "\""; done 
 bunx prettier --write src-tauri/tauri.conf.json package.json > /dev/null
 
 git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml
-git commit -m "Release v$version"
+git commit -m "Release v$version" --trailer "Co-Authored-By: Claude <noreply@anthropic.com>"
 # A message, since tag.gpgsign makes every tag annotated
 git tag -a "v$version" -m "Release v$version"
 git push origin HEAD "v$version"

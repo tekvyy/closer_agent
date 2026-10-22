@@ -14,7 +14,7 @@ Research runs through the Claude Code CLI (Claude models) or the Codex CLI (Chat
 
 ## Install
 
-Download the installer for your computer from the [latest release](https://github.com/tekvyy/closers/releases/latest):
+Download the installer for your computer from the [latest release](https://github.com/tekvyy/closer_agent/releases/latest):
 
 - **Windows**: the file ending in `windows_x64-setup.exe`. No administrator rights needed.
 - **macOS**: the `.dmg` for your Mac (`aarch64` for Apple Silicon, `x64` for Intel). Closer isn't code-signed yet, so before opening it the first time run `xattr -cr /Applications/Closer.app` in Terminal.
