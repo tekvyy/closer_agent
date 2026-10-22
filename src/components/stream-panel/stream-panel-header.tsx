@@ -1,8 +1,9 @@
 "use client";
 
 import { useStreamPanelStore } from "@/lib/store/stream-panel-store";
-import { useStreamTabs } from "@/lib/hooks/use-stream-tabs";
-import { useJob } from "@/lib/query/use-job-query";
+import { useActiveJobs, useJob } from "@/lib/query/use-job-query";
+import { cancelQueuedJobs } from "@/lib/tauri/commands";
+import { toast } from "sonner";
 import { StreamPanelTabs } from "./stream-panel-tabs";
 import { useStreamSubscription } from "./use-stream-subscription";
 import { IconChevronDown, IconChevronUp, IconPlayerStop } from "@tabler/icons-react";
@@ -13,13 +14,26 @@ export function StreamPanelHeader() {
   const isOpen = useStreamPanelStore((s) => s.isOpen);
   const activeTabId = useStreamPanelStore((s) => s.activeTabId);
 
-  const { tabs } = useStreamTabs();
   const { killJob, closeTab } = useStreamSubscription();
 
   // Fetch active job details
   const { data: activeJob } = useJob(activeTabId ?? "", !!activeTabId);
 
-  const runningCount = tabs.filter((t) => t.status === "running" || t.status === "queued").length;
+  // Counted from every active job, not just the tabs (which show the newest 50)
+  const { data: activeJobs = [] } = useActiveJobs();
+  const runningCount = activeJobs.filter((job) => job.status === "running").length;
+  const queuedCount = activeJobs.filter((job) => job.status === "queued").length;
+
+  const handleStopQueued = async () => {
+    try {
+      const cancelled = await cancelQueuedJobs();
+      toast.success(`Cancelled ${cancelled} queued job${cancelled === 1 ? "" : "s"}`, {
+        description: "Jobs already running will finish.",
+      });
+    } catch (error) {
+      toast.error("Couldn't cancel queued jobs", { description: String(error) });
+    }
+  };
 
   const handleCloseTab = async (jobId: string, isRunning: boolean) => {
     // Delete all job data when closing a tab
@@ -51,10 +65,24 @@ export function StreamPanelHeader() {
           </Button>
         )}
 
-        {runningCount > 0 && (
+        {queuedCount > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleStopQueued}
+            title="Cancel every job that hasn't started yet; running jobs finish"
+            className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <IconPlayerStop className="size-3 mr-1" />
+            Stop queued
+          </Button>
+        )}
+
+        {(runningCount > 0 || queuedCount > 0) && (
           <span className="flex items-center gap-1 text-xs text-muted-foreground">
             <span className="size-1.5 rounded-full bg-blue-400 animate-pulse" />
             {runningCount} running
+            {queuedCount > 0 && ` · ${queuedCount} queued`}
           </span>
         )}
 

@@ -2,6 +2,9 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { ClientLogEntry } from "@/lib/types/claude";
 
+/** Log entries kept in memory per job; the full log stays in the database */
+const MAX_LOGS_PER_JOB = 2000;
+
 export type StreamTabType = "company" | "person" | "conversation" | "scoring";
 
 interface StreamPanelState {
@@ -42,12 +45,13 @@ export const useStreamPanelStore = create<StreamPanelState>()(
 
       setActiveTab: (jobId) => set({ activeTabId: jobId }),
 
-      // Append new logs (from live streaming)
+      // Append new logs (from live streaming), keeping the newest MAX_LOGS_PER_JOB so
+      // hours of autopilot jobs don't grow memory without bound
       appendLogs: (jobId, logs) =>
         set((state) => {
           const newJobLogs = new Map(state.jobLogs);
           const existing = newJobLogs.get(jobId) ?? [];
-          newJobLogs.set(jobId, [...existing, ...logs]);
+          newJobLogs.set(jobId, [...existing, ...logs].slice(-MAX_LOGS_PER_JOB));
           return { jobLogs: newJobLogs };
         }),
 

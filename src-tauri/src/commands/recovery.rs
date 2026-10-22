@@ -12,7 +12,7 @@ use tauri::{AppHandle, State};
 pub fn get_stuck_entities(state: State<'_, DbState>) -> Result<StaleJobsResult, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
 
-    let stale_jobs = detect_stale_jobs(&conn)?;
+    let stale_jobs = detect_stale_jobs(&conn, false)?;
     let stuck_leads = detect_stuck_leads(&conn)?;
     let stuck_people = detect_stuck_people(&conn)?;
 
@@ -73,7 +73,7 @@ pub fn reset_entity_status(
 pub fn recover_all_stuck(app: AppHandle, state: State<'_, DbState>) -> Result<usize, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
 
-    let stale_recovered = recover_stale_jobs(&conn, &app)?;
+    let stale_recovered = recover_stale_jobs(&conn, &app, false)?;
     let stuck_recovered = recover_stuck_entities(&conn, &app)?;
 
     Ok(stale_recovered + stuck_recovered)

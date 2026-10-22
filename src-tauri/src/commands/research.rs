@@ -45,11 +45,18 @@ pub async fn queue_company_research(
             .map(|job| job.id)
     };
     if let Some(job_id) = existing_job_id {
+        // Autopilot never interrupts work already under way for this entity
+        if background {
+            return Ok(ResearchResult {
+                job_id,
+                status: "already_running".to_string(),
+            });
+        }
         eprintln!(
             "[research] Cancelling existing job {} for lead {}",
             job_id, lead_id
         );
-        let _ = queue.kill_job(&job_id).await;
+        let _ = queue.replace_job(&job_id).await;
     }
 
     // Get lead
@@ -203,11 +210,18 @@ pub async fn queue_person_research(
             .map(|job| job.id)
     };
     if let Some(job_id) = existing_job_id {
+        // Autopilot never interrupts work already under way for this entity
+        if background {
+            return Ok(ResearchResult {
+                job_id,
+                status: "already_running".to_string(),
+            });
+        }
         eprintln!(
             "[research] Cancelling existing job {} for person {}",
             job_id, person_id
         );
-        let _ = queue.kill_job(&job_id).await;
+        let _ = queue.replace_job(&job_id).await;
     }
 
     // Get person and optionally lead
@@ -764,11 +778,18 @@ pub async fn queue_scoring(
             .map(|job| job.id)
     };
     if let Some(job_id) = existing_job_id {
+        // Autopilot never interrupts work already under way for this entity
+        if background {
+            return Ok(ResearchResult {
+                job_id,
+                status: "already_running".to_string(),
+            });
+        }
         eprintln!(
             "[research] Cancelling existing scoring job {} for lead {}",
             job_id, lead_id
         );
-        let _ = queue.kill_job(&job_id).await;
+        let _ = queue.replace_job(&job_id).await;
     }
 
     // Get lead with people
@@ -884,11 +905,18 @@ pub async fn queue_conversation(
             .map(|job| job.id)
     };
     if let Some(job_id) = existing_job_id {
+        // Autopilot never interrupts work already under way for this entity
+        if background {
+            return Ok(ResearchResult {
+                job_id,
+                status: "already_running".to_string(),
+            });
+        }
         eprintln!(
             "[research] Cancelling existing conversation job {} for person {}",
             job_id, person_id
         );
-        let _ = queue.kill_job(&job_id).await;
+        let _ = queue.replace_job(&job_id).await;
     }
 
     // Get person and optionally lead

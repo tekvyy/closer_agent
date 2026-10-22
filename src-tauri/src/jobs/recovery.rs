@@ -8,8 +8,9 @@ use rusqlite::{params, Connection};
 use std::sync::{Arc, Mutex};
 use tauri::AppHandle;
 
-/// Maximum age (in seconds) for a job to be considered "running" before it's stale.
-/// Jobs older than this are assumed to have died without proper cleanup.
+/// How long (in seconds) a job may run before it's considered stale. Jobs time out after
+/// 10 minutes, so one still running after that died without proper cleanup. Queued jobs
+/// can wait much longer for a slot, so only running ones go stale while the app runs.
 const STALE_JOB_THRESHOLD_SECS: i64 = 600; // 10 minutes
 
 /// Result of stale job detection
@@ -44,8 +45,13 @@ pub struct StuckEntity {
     pub status: String,
 }
 
-/// Detect stale jobs - jobs with "running" or "queued" status that are too old
-pub fn detect_stale_jobs(conn: &Connection) -> Result<Vec<StaleJob>, String> {
+/// Detect stale jobs: jobs running for longer than the job timeout, or with
+/// `every_unfinished` (at startup, when no job from the last run can still be alive)
+/// every queued or running job
+pub fn detect_stale_jobs(
+    conn: &Connection,
+    every_unfinished: bool,
+) -> Result<Vec<StaleJob>, String> {
     let now = chrono::Utc::now().timestamp();
     let threshold = now - STALE_JOB_THRESHOLD_SECS;
 
@@ -54,13 +60,13 @@ pub fn detect_stale_jobs(conn: &Connection) -> Result<Vec<StaleJob>, String> {
             "SELECT id, job_type, entity_id, entity_label, status, started_at, created_at
          FROM jobs
          WHERE status IN ('queued', 'running')
-           AND created_at < ?1
+           AND (?2 OR (status = 'running' AND COALESCE(started_at, created_at) < ?1))
          ORDER BY created_at ASC",
         )
         .map_err(|e| e.to_string())?;
 
     let rows = stmt
-        .query_map(params![threshold], |row| {
+        .query_map(params![threshold, every_unfinished], |row| {
             Ok(StaleJob {
                 id: row.get(0)?,
                 job_type: row.get(1)?,
@@ -140,8 +146,12 @@ pub fn detect_stuck_people(conn: &Connection) -> Result<Vec<StuckEntity>, String
 }
 
 /// Recover stale jobs - mark them as error and reset associated entity status
-pub fn recover_stale_jobs(conn: &Connection, app: &AppHandle) -> Result<usize, String> {
-    let stale_jobs = detect_stale_jobs(conn)?;
+pub fn recover_stale_jobs(
+    conn: &Connection,
+    app: &AppHandle,
+    every_unfinished: bool,
+) -> Result<usize, String> {
+    let stale_jobs = detect_stale_jobs(conn, every_unfinished)?;
     let now = chrono::Utc::now().timestamp();
     let mut recovered = 0;
 
@@ -250,8 +260,8 @@ pub fn recover_on_startup(conn: &Arc<Mutex<Connection>>, app: &AppHandle) {
         }
     };
 
-    // Recover stale jobs
-    match recover_stale_jobs(&conn_guard, app) {
+    // No job from the previous run is still alive, however recently it was queued
+    match recover_stale_jobs(&conn_guard, app, true) {
         Ok(count) if count > 0 => eprintln!("[recovery] Recovered {} stale jobs", count),
         Err(e) => eprintln!("[recovery] Failed to recover stale jobs: {}", e),
         _ => {}

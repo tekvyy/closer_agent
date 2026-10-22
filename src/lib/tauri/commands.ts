@@ -283,8 +283,14 @@ export async function updateSettings(model: string, useChrome: boolean): Promise
   return invoke("update_settings", { model, useChrome });
 }
 
+/** Turning autopilot off also cancels the jobs it queued that haven't started */
 export async function setAutoResearch(enabled: boolean): Promise<void> {
   return invoke("set_auto_research", { enabled });
+}
+
+/** Cancels every job still waiting for a slot; resolves with how many were cancelled */
+export async function cancelQueuedJobs(): Promise<number> {
+  return invoke("cancel_queued_jobs");
 }
 
 // ============================================================================

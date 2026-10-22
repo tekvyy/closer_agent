@@ -48,7 +48,6 @@ next-env.d.ts
 # tauri
 src-tauri/target/
 src-tauri/WixTools/
-src-tauri/Cargo.lock
 
 # IDE
 .idea/

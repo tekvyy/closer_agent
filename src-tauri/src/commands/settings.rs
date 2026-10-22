@@ -1,4 +1,5 @@
 use crate::db::{self, DbState, Settings};
+use crate::jobs::JobQueue;
 use tauri::State;
 
 #[tauri::command]
@@ -36,8 +37,27 @@ pub fn update_settings(
     Ok(())
 }
 
+/// Turn autopilot on or off. Turning it off also cancels the jobs it queued that haven't
+/// started yet, so the backlog stops too.
 #[tauri::command]
-pub fn set_auto_research(state: State<'_, DbState>, enabled: bool) -> Result<(), String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    db::set_auto_research(&conn, enabled).map_err(|e| e.to_string())
+pub async fn set_auto_research(
+    state: State<'_, DbState>,
+    queue: State<'_, JobQueue>,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let conn = state.conn.lock().map_err(|e| e.to_string())?;
+        db::set_auto_research(&conn, enabled).map_err(|e| e.to_string())?;
+    }
+    if !enabled {
+        let cancelled = queue.cancel_queued(true).await;
+        eprintln!("[settings] Autopilot off, cancelled {cancelled} queued jobs");
+    }
+    Ok(())
+}
+
+/// Cancel every job waiting for a slot. Returns how many were cancelled.
+#[tauri::command]
+pub async fn cancel_queued_jobs(queue: State<'_, JobQueue>) -> Result<usize, String> {
+    Ok(queue.cancel_queued(false).await)
 }

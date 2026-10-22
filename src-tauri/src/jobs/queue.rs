@@ -53,8 +53,19 @@ pub struct StreamEvent {
 }
 
 struct ActiveJob {
-    cancel_tx: mpsc::Sender<()>,
+    cancel_tx: mpsc::Sender<Cancel>,
     status: String,
+    /// Started by autopilot
+    background: bool,
+}
+
+/// Why a job is being cancelled
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cancel {
+    /// Stopped by the user: the entity goes back to pending
+    User,
+    /// Replaced by a new job for the same entity, which now owns the entity's status
+    Replaced,
 }
 
 /// RAII guard that ensures job cleanup on drop (including panics).
@@ -273,7 +284,7 @@ impl JobQueue {
         let semaphore = self.semaphore.clone();
         let active_jobs = self.active_jobs.clone();
 
-        let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
+        let (cancel_tx, mut cancel_rx) = mpsc::channel::<Cancel>(1);
 
         // Register the job in memory
         {
@@ -283,6 +294,7 @@ impl JobQueue {
                 ActiveJob {
                     cancel_tx,
                     status: "queued".to_string(),
+                    background: metadata.background,
                 },
             );
         }
@@ -396,7 +408,7 @@ impl JobQueue {
                         }
                     }
                 }
-                _ = cancel_rx.recv() => {
+                reason = cancel_rx.recv() => {
                     let _ = on_event.send(StreamEvent {
                         job_id: job_id_clone.clone(),
                         event_type: "cancelled".to_string(),
@@ -404,9 +416,12 @@ impl JobQueue {
                         timestamp: chrono::Utc::now().timestamp_millis(),
                     });
                     active_jobs.lock().await.remove(&job_id_clone);
-                    // Reset entity status on cancellation while queued
-                    if let Some(ref ctx) = entity_context {
-                        db_reset_entity_status(&db_conn, ctx, &app_clone);
+                    // Reset entity status on cancellation while queued, unless a new job
+                    // for the entity replaced this one and already set its status
+                    if reason != Some(Cancel::Replaced) {
+                        if let Some(ref ctx) = entity_context {
+                            db_reset_entity_status(&db_conn, ctx, &app_clone);
+                        }
                     }
                     update_job_status("cancelled", None, Some("Cancelled while queued"));
                     job_guard.defuse(); // Cleanup handled manually
@@ -450,6 +465,12 @@ impl JobQueue {
             // Spawn the process with kill_on_drop for safety. The prompt is sent on stdin
             // rather than argv because Windows caps command lines at ~32K characters.
             let mut command = Command::new(&cli_path);
+            // Claude Code on Windows needs Git Bash unless its PowerShell tool is on; the
+            // client won't have Git installed, and Windows always has PowerShell
+            #[cfg(windows)]
+            if provider == Provider::Claude {
+                command.env("CLAUDE_CODE_USE_POWERSHELL_TOOL", "1");
+            }
             command
                 .args(&args)
                 .current_dir(&working_dir)
@@ -567,6 +588,7 @@ impl JobQueue {
             });
 
             // Wait for completion with timeout
+            let mut cancel_reason = None;
             let result = tokio::select! {
                 status = child.wait() => {
                     match status {
@@ -590,8 +612,9 @@ impl JobQueue {
                     graceful_shutdown(child, &job_id_clone).await;
                     ("timeout".to_string(), None, false)
                 }
-                _ = cancel_rx.recv() => {
-                    eprintln!("[job_queue] job_id={} Job cancelled by user", job_id_clone);
+                reason = cancel_rx.recv() => {
+                    eprintln!("[job_queue] job_id={} Job cancelled ({:?})", job_id_clone, reason);
+                    cancel_reason = Some(reason.unwrap_or(Cancel::User));
                     graceful_shutdown(child, &job_id_clone).await;
                     ("cancelled".to_string(), None, false)
                 }
@@ -626,8 +649,10 @@ impl JobQueue {
             // Finalize stream processor and get completion context
             let completion_ctx = stream_processor.finalize(result.2, result.1).await;
 
-            // Surface failures the user fixes by installing, updating or signing in to the CLI
-            if result.0 != "cancelled" {
+            // Surface failures the user fixes by installing, updating or signing in to the CLI.
+            // Only failed runs: a finished job's output can mention limits or updates in
+            // tool errors (a site's rate limit) that aren't about the CLI.
+            if result.0 == "error" {
                 let errors = cli_tools::error_lines(
                     &completion_ctx.accumulated_stdout,
                     &completion_ctx.accumulated_stderr,
@@ -660,9 +685,25 @@ impl JobQueue {
 
             // Process completion atomically using CompletionHandler
             let completion_handler = CompletionHandler::new(db_conn.clone(), app_clone.clone());
-            let completion = completion_handler.process_completion(&completion_ctx, &metadata);
+            let completion = match cancel_reason {
+                // A cancelled job has no output to process. The entity goes back to pending,
+                // unless a new job replaced this one and owns its status now.
+                Some(reason) => {
+                    if reason == Cancel::User {
+                        if let Some(ref ctx) = entity_context {
+                            db_reset_entity_status(&db_conn, ctx, &app_clone);
+                        }
+                    }
+                    Ok(())
+                }
+                None => completion_handler.process_completion(&completion_ctx, &metadata),
+            };
             if completion.is_ok() && completion_ctx.success {
-                crate::autopilot::job_succeeded(&app_clone, &job_id_clone, &metadata);
+                crate::autopilot::job_succeeded(
+                    &app_clone,
+                    &metadata,
+                    &completion_handler.created_leads(),
+                );
             }
             if let Err(e) = completion {
                 eprintln!(
@@ -722,11 +763,41 @@ impl JobQueue {
         Ok(job_id)
     }
 
+    /// Stop a job at the user's request
     pub async fn kill_job(&self, job_id: &str) -> Result<(), String> {
-        eprintln!("[job_queue] Attempting to kill job_id={}", job_id);
+        self.cancel(job_id, Cancel::User).await
+    }
+
+    /// Stop a job that a new job for the same entity replaces
+    pub async fn replace_job(&self, job_id: &str) -> Result<(), String> {
+        self.cancel(job_id, Cancel::Replaced).await
+    }
+
+    /// Cancel every job still waiting for a slot; running jobs finish. Returns how many
+    /// were cancelled.
+    pub async fn cancel_queued(&self, background_only: bool) -> usize {
+        let mut jobs = self.active_jobs.lock().await;
+        let queued: Vec<String> = jobs
+            .iter()
+            .filter(|(_, job)| job.status == "queued" && (job.background || !background_only))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &queued {
+            if let Some(job) = jobs.remove(id) {
+                let _ = job.cancel_tx.try_send(Cancel::User);
+            }
+        }
+        queued.len()
+    }
+
+    async fn cancel(&self, job_id: &str, reason: Cancel) -> Result<(), String> {
+        eprintln!(
+            "[job_queue] Attempting to cancel job_id={} ({:?})",
+            job_id, reason
+        );
         let mut jobs = self.active_jobs.lock().await;
         if let Some(job) = jobs.remove(job_id) {
-            if let Err(e) = job.cancel_tx.send(()).await {
+            if let Err(e) = job.cancel_tx.send(reason).await {
                 eprintln!(
                     "[job_queue] job_id={} Failed to send cancel signal: {}",
                     job_id, e

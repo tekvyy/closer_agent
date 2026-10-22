@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
+  getJobsActive,
   installCli,
   openCliTerminal,
   type CliAction,
@@ -152,6 +153,19 @@ export function CliIssueDialog() {
     const installing = issue;
     const name = CLI_NAMES[installing.provider];
     const previousVersion = cliStatus[installing.provider]?.version ?? null;
+
+    // Running jobs hold the CLI's program file open, which makes replacing it fail on
+    // Windows
+    if (cliStatus[installing.provider]?.found) {
+      const activeJobs = await getJobsActive().catch(() => []);
+      if (activeJobs.length > 0) {
+        toast.info(`Research is still running`, {
+          description: `Update ${name} once the running jobs finish, or stop them in the panel below.`,
+        });
+        return;
+      }
+    }
+
     setIsInstalling(true);
     setInstallLog([]);
     setInstallError(null);
@@ -235,7 +249,7 @@ export function CliIssueDialog() {
             {isInstalling
               ? `Downloading and setting up ${cli}. This can take a few minutes; you can close this window and keep working.`
               : installError
-                ? `${cli} couldn't be set up automatically. Check your internet connection and try again, or run the installer in a window to see what's going wrong.`
+                ? `${cli} couldn't be set up automatically. The installer's last messages are below. Try again, or run the installer in a window to see what's going wrong.`
                 : copy.description}
           </DialogDescription>
         </DialogHeader>

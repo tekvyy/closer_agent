@@ -149,6 +149,7 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
             commands::set_auto_research,
+            commands::cancel_queued_jobs,
             // Agent CLI commands
             cli_tools::check_cli,
             cli_tools::open_cli_terminal,

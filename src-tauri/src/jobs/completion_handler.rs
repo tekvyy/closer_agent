@@ -92,6 +92,8 @@ pub enum ParsedOutput {
 pub struct CompletionHandler {
     db_conn: Arc<std::sync::Mutex<rusqlite::Connection>>,
     app_handle: AppHandle,
+    /// Leads a lead-finder job inserted
+    created_leads: std::sync::Mutex<Vec<i64>>,
 }
 
 impl CompletionHandler {
@@ -102,7 +104,16 @@ impl CompletionHandler {
         Self {
             db_conn,
             app_handle,
+            created_leads: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    /// Leads inserted by the processed job, for a lead-finder job that completed
+    pub fn created_leads(&self) -> Vec<i64> {
+        self.created_leads
+            .lock()
+            .map(|ids| ids.clone())
+            .unwrap_or_default()
     }
 
     /// Process job completion through all phases
@@ -629,6 +640,9 @@ impl CompletionHandler {
                     ).map_err(|e| CompletionError::DatabaseError(e.to_string()))?;
 
                     let lead_id = tx.last_insert_rowid();
+                    if let Ok(mut created) = self.created_leads.lock() {
+                        created.push(lead_id);
+                    }
                     // Emit lead-created event so frontend updates incrementally
                     events::emit_lead_created(&self.app_handle, lead_id);
                 }

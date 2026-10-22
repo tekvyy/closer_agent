@@ -190,6 +190,15 @@ pub fn find_cli(provider: Provider) -> Option<String> {
         .find(|p| p.is_file())
     {
         eprintln!("[cli_tools] Found {} at: {}", name, path.display());
+        // An npm shim runs `node`, which a Node.js installed after Closer started has
+        // only put on the saved PATH
+        #[cfg(windows)]
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd"))
+        {
+            refresh_path();
+        }
         return Some(path.to_string_lossy().to_string());
     }
 
@@ -274,11 +283,13 @@ pub fn detect_issue(error_output: &str) -> Option<(CliIssueKind, String)> {
 }
 
 /// Pull the lines worth classifying out of a job's output: all of stderr plus the
-/// stdout events that report an error.
+/// stdout events that report the run's own error. Tool results also carry
+/// `"is_error":true` (a page that failed to load), so only the final result counts.
 pub fn error_lines(stdout: &str, stderr: &str) -> String {
-    let stdout_errors = stdout
-        .lines()
-        .filter(|line| line.contains("\"is_error\":true") || line.contains("\"type\":\"error\""));
+    let stdout_errors = stdout.lines().filter(|line| {
+        line.contains("\"type\":\"error\"")
+            || (line.contains("\"type\":\"result\"") && line.contains("\"is_error\":true"))
+    });
     stderr
         .lines()
         .chain(stdout_errors)
@@ -600,5 +611,18 @@ mod tests {
         let stdout = r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"Our API has a rate limit"}]}}
 {"type":"result","is_error":false}"#;
         assert!(detect_issue(&error_lines(stdout, "")).is_none());
+    }
+
+    #[test]
+    fn ignores_failed_tool_calls_but_reads_the_final_result() {
+        let tool_error = r#"{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"HTTP 429: rate limit exceeded"}]}}"#;
+        assert!(detect_issue(&error_lines(tool_error, "")).is_none());
+
+        let result_error =
+            r#"{"type":"result","is_error":true,"result":"You've hit your usage limit"}"#;
+        assert_eq!(
+            detect_issue(&error_lines(result_error, "")).unwrap().0,
+            CliIssueKind::Limit
+        );
     }
 }

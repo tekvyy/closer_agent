@@ -34,22 +34,20 @@ fn background_channel(app: &AppHandle) -> Channel<StreamEvent> {
     })
 }
 
-/// Queue the follow-up jobs for a job that finished successfully
-pub fn job_succeeded(app: &AppHandle, job_id: &str, metadata: &JobMetadata) {
-    let steps = match next_steps(app, job_id, metadata) {
+/// Queue the follow-up jobs for a job that finished successfully. `created_leads` are
+/// the leads a find-leads job inserted.
+pub fn job_succeeded(app: &AppHandle, metadata: &JobMetadata, created_leads: &[i64]) {
+    let steps = match next_steps(app, metadata, created_leads) {
         Ok(steps) => steps,
         Err(e) => {
-            eprintln!("[autopilot] Couldn't plan the steps after job {job_id}: {e}");
+            eprintln!("[autopilot] Couldn't plan the next steps: {e}");
             return;
         }
     };
     if steps.is_empty() {
         return;
     }
-    eprintln!(
-        "[autopilot] Job {job_id} done, queueing {} follow-up jobs",
-        steps.len()
-    );
+    eprintln!("[autopilot] Queueing {} follow-up jobs", steps.len());
 
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -76,8 +74,8 @@ pub fn job_succeeded(app: &AppHandle, job_id: &str, metadata: &JobMetadata) {
 
 fn next_steps(
     app: &AppHandle,
-    job_id: &str,
     metadata: &JobMetadata,
+    created_leads: &[i64],
 ) -> Result<Vec<NextStep>, String> {
     let state = app.state::<DbState>();
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
@@ -90,9 +88,9 @@ fn next_steps(
 
     let id = metadata.entity_id;
     let steps = match metadata.job_type {
-        JobType::LeadFinder => leads_found_by(&conn, job_id)
-            .map_err(|e| e.to_string())?
-            .into_iter()
+        JobType::LeadFinder => created_leads
+            .iter()
+            .copied()
             .map(NextStep::ResearchLead)
             .collect(),
         JobType::CompanyResearch => {
@@ -118,18 +116,6 @@ fn next_steps(
     Ok(steps)
 }
 
-/// Leads a find-leads job added, which are the unresearched ones created since it started
-fn leads_found_by(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<i64>> {
-    let mut stmt = conn.prepare(
-        "SELECT id FROM leads
-         WHERE research_status = 'pending'
-           AND created_at >= (SELECT created_at FROM jobs WHERE id = ?1)
-         ORDER BY id",
-    )?;
-    let ids = stmt.query_map(params![job_id], |row| row.get(0))?;
-    ids.collect()
-}
-
 fn unresearched_people(conn: &Connection, lead_id: i64) -> rusqlite::Result<Vec<i64>> {
     let mut stmt = conn.prepare(
         "SELECT id FROM people
@@ -142,7 +128,7 @@ fn unresearched_people(conn: &Connection, lead_id: i64) -> rusqlite::Result<Vec<
 
 #[cfg(test)]
 mod tests {
-    use super::{leads_found_by, unresearched_people};
+    use super::unresearched_people;
     use rusqlite::Connection;
 
     fn db() -> Connection {
@@ -159,22 +145,6 @@ mod tests {
         )
         .unwrap();
         conn.last_insert_rowid()
-    }
-
-    #[test]
-    fn lead_finder_follow_up_researches_only_its_new_leads() {
-        let conn = db();
-        add_lead(&conn, "Old pending", "pending", 100);
-        conn.execute(
-            "INSERT INTO jobs (id, job_type, entity_id, entity_label, status, prompt, working_dir, created_at)
-             VALUES ('job', 'lead_finder', 0, 'Find', 'completed', '', '.', 200)",
-            [],
-        )
-        .unwrap();
-        let found = add_lead(&conn, "Found", "pending", 250);
-        add_lead(&conn, "Researched meanwhile", "completed", 260);
-
-        assert_eq!(leads_found_by(&conn, "job").unwrap(), vec![found]);
     }
 
     #[test]
