@@ -9,6 +9,7 @@ import {
 import { ModelSelector } from "./model-selector";
 import { ChromeToggle } from "./chrome-toggle";
 import { AutopilotToggle } from "./autopilot-toggle";
+import { CrmConnectionRow } from "@/components/crm/crm-connection";
 import { OnboardingChecklist } from "@/components/onboarding/onboarding-checklist";
 import { useOnboardingStatus } from "@/lib/query";
 
@@ -82,6 +83,7 @@ export function Sidebar() {
         <ModelSelector />
         <ChromeToggle />
         <AutopilotToggle />
+        <CrmConnectionRow />
       </div>
 
       {onboardingStatus && <OnboardingChecklist status={onboardingStatus} />}

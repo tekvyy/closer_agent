@@ -2,6 +2,7 @@ mod app_update;
 mod autopilot;
 mod cli_tools;
 mod commands;
+mod crm;
 mod db;
 mod events;
 mod jobs;
@@ -150,6 +151,11 @@ pub fn run() {
             commands::update_settings,
             commands::set_auto_research,
             commands::cancel_queued_jobs,
+            // CRM commands
+            crm::get_crm_connection,
+            crm::connect_crm,
+            crm::disconnect_crm,
+            crm::push_people_to_crm,
             // Agent CLI commands
             cli_tools::check_cli,
             cli_tools::open_cli_terminal,

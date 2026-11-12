@@ -24,6 +24,9 @@ tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Same TLS setup as the updater plugin: rustls with the ring provider, no extra native build tools
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 tokio = { version = "1", features = ["full", "sync"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }

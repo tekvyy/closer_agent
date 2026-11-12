@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
-import { IconBuilding, IconTrash, IconSearch, IconMessage } from "@tabler/icons-react";
+import { IconBuilding, IconTrash, IconSearch, IconMessage, IconSend } from "@tabler/icons-react";
+import { useCrmStore } from "@/lib/store/crm-store";
 import { SelectableEntityList, SelectableRow } from "@/components/selection";
 import type { ActionConfig } from "@/components/selection";
 import { toast } from "sonner";
@@ -74,6 +75,15 @@ export function PeopleListWithSelection({
     [personMap]
   );
 
+  const pushToCrm = useCrmStore((state) => state.push);
+  const handlePushToCrm = useCallback(
+    async (selectedIds: number[]) => {
+      const ids = selectedIds.filter((id) => personMap.has(id));
+      if (await pushToCrm(ids)) clearSelection();
+    },
+    [personMap, pushToCrm, clearSelection]
+  );
+
   const handleDelete = useCallback(
     async (selectedIds: number[]) => {
       try {
@@ -106,6 +116,13 @@ export function PeopleListWithSelection({
         onExecute: handleConversation,
       },
       {
+        id: "push-to-crm",
+        label: "Push to CRM",
+        icon: IconSend,
+        group: "CRM",
+        onExecute: handlePushToCrm,
+      },
+      {
         id: "delete",
         label: "Delete",
         icon: IconTrash,
@@ -114,7 +131,7 @@ export function PeopleListWithSelection({
         onExecute: handleDelete,
       },
     ],
-    [handleResearch, handleConversation, handleDelete]
+    [handleResearch, handleConversation, handlePushToCrm, handleDelete]
   );
 
   return (

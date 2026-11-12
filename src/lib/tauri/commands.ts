@@ -364,3 +364,41 @@ export async function downloadAppUpdate(): Promise<string | null> {
 export async function installAppUpdate(): Promise<void> {
   return invoke("install_app_update");
 }
+
+// ============================================================================
+// CRM commands (Push to CRM)
+// ============================================================================
+
+/** The saved CRM connection. The key itself never leaves the backend. */
+export interface CrmConnection {
+  url: string;
+  keyName: string;
+  connectedAt: number;
+}
+
+export interface PushSummary {
+  created: number;
+  updated: number;
+  unchanged: number;
+  archived: number;
+  invalid: number;
+  /** People without an email address, so they weren't sent */
+  noEmail: number;
+}
+
+export async function getCrmConnection(): Promise<CrmConnection | null> {
+  return invoke("get_crm_connection");
+}
+
+/** Checks the address and key with the CRM; saves them only if the CRM accepts them */
+export async function connectCrm(url: string, key: string): Promise<CrmConnection> {
+  return invoke("connect_crm", { url, key });
+}
+
+export async function disconnectCrm(): Promise<void> {
+  return invoke("disconnect_crm");
+}
+
+export async function pushPeopleToCrm(personIds: number[]): Promise<PushSummary> {
+  return invoke("push_people_to_crm", { personIds });
+}

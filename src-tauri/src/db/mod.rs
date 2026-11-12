@@ -218,6 +218,8 @@ fn run_migrations(conn: &Connection) -> SqliteResult<()> {
             .unwrap_or(false)
     }
 
+    crate::crm::create_table(conn)?;
+
     if !column_exists(conn, "leads", "notes") {
         conn.execute("ALTER TABLE leads ADD COLUMN notes TEXT", [])?;
     }
