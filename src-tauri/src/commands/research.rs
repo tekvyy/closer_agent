@@ -433,7 +433,9 @@ For the people JSON, find the 3-6 people at this company who would decide on or 
 buying what we sell (see the Company Overview, if given): typically the founder or CEO for
 small companies, and the relevant department heads and VPs for larger ones. Only include
 people you found evidence for (the company website, LinkedIn, press, conference talks) who
-still work there. Include their LinkedIn URL whenever you find it, and never guess emails.
+still work there. Include their LinkedIn URL whenever you find it. Include an email when you
+see it published for that person (a team or contact page, a press release, their own site, a
+speaker page); never make one up here, because each person's own research looks for it properly.
 Write an empty array if you can't find anyone reliable.
 
 The people JSON should be an array of objects with these fields:
@@ -476,7 +478,37 @@ const PERSON_ENRICHMENT_SCHEMA: &str = r#"This file should contain verified pers
 ```
 
 Valid managementLevel values: C-Level, VP, Director, Manager, IC
-IMPORTANT: Only include fields with verified data. Omit fields if uncertain."#;
+IMPORTANT: Only include fields with verified data. Omit fields if uncertain. The one exception is
+"email": include it when it was published or worked out from the company's confirmed pattern, as
+described under "Finding their email"."#;
+
+/// Added to every person research, whatever the prompt says, because an email is what turns a
+/// researched person into someone you can contact.
+const EMAIL_FINDING: &str = r###"
+# Finding their email (do this first)
+
+The most important result is this person's email address. Work on it before the rest of the
+profile, and keep searching until you have tried every step below.
+
+1. Look for it published. Search the web for their name together with the company's domain and
+   the "@" sign (for example "Jane Doe" "@company.com", and "jane@company.com"). Check the
+   company website's team, about, contact, press and legal pages; press releases and media kits;
+   their personal website, blog or newsletter; podcast, webinar and conference speaker pages;
+   books, course or event listings; PDFs such as reports, slide decks and filings; GitHub and
+   other public profiles; and directory, association or chamber of commerce listings.
+2. If their own address isn't published, work out the company's email pattern from other real
+   addresses published at the same domain (for example jane.doe@, jdoe@ or jane@) and apply it to
+   this person. Only do this when you found at least one real published address at that domain
+   showing the pattern. For a business of one or two people, the contact address on their own
+   website counts (info@ or hello@ included).
+3. Never invent an address or use a pattern you didn't see evidence for. "Not found" is better
+   than a wrong address.
+
+Start the person profile with an "## Email" section that gives the address (or "Not found"),
+then how you know it: "Published" with the page where you saw it, or "From the company's
+pattern" with the example addresses you based it on. If not found, list what you searched.
+Put the address in the enrichment file's "email" field whenever you found one.
+"###;
 
 fn build_research_prompt(
     prompt: &str,
@@ -574,6 +606,20 @@ fn build_person_research_prompt(
         if let Some(website) = &l.website {
             full_prompt.push_str(&format!("Website: {}\n", website));
         }
+    }
+
+    if person
+        .email
+        .as_deref()
+        .is_none_or(|email| email.trim().is_empty())
+    {
+        full_prompt.push_str(EMAIL_FINDING);
+    } else {
+        full_prompt.push_str(
+            "\n# Email\n\nTheir email is already known (above), so there's no need to search for it. \
+             Start the person profile with an \"## Email\" section that gives it, and mention it if \
+             you see a sign it's out of date.\n",
+        );
     }
 
     full_prompt.push_str(&format!(
@@ -1410,4 +1456,61 @@ fn format_lead_context(lead: &db::Lead, people: &[db::Person]) -> String {
     }
 
     parts.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    fn person(email: Option<&str>) -> db::Person {
+        db::Person {
+            id: 1,
+            lead_id: None,
+            first_name: "Jane".into(),
+            last_name: "Doe".into(),
+            email: email.map(String::from),
+            title: None,
+            management_level: None,
+            linkedin_url: None,
+            year_joined: None,
+            person_profile: None,
+            research_status: "pending".into(),
+            researched_at: None,
+            user_status: "new".into(),
+            conversation_topics: None,
+            conversation_generated_at: None,
+            created_at: 0,
+        }
+    }
+
+    fn prompt_for(email: Option<&str>) -> String {
+        build_person_research_prompt(
+            "Research them.",
+            &person(email),
+            None,
+            Path::new("p.md"),
+            Path::new("e.json"),
+            None,
+        )
+    }
+
+    #[test]
+    fn person_research_searches_for_a_missing_email_first() {
+        for missing in [None, Some(""), Some("  ")] {
+            let prompt = prompt_for(missing);
+            assert!(prompt.contains("# Finding their email (do this first)"));
+            assert!(
+                prompt.find("Finding their email").unwrap()
+                    < prompt.find("# Output Files").unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn person_research_skips_the_search_when_the_email_is_known() {
+        let prompt = prompt_for(Some("jane@example.com"));
+        assert!(!prompt.contains("Finding their email (do this first)"));
+        assert!(prompt.contains("Their email is already known"));
+    }
 }

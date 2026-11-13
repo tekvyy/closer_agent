@@ -20,6 +20,8 @@ interface CollapsibleStatusGroupProps {
   children: ReactNode;
   startsOpen?: boolean;
   configType?: StatusConfigType;
+  /** Shown at the right of the header, e.g. a checkbox that selects the whole group */
+  action?: ReactNode;
 }
 
 export function CollapsibleStatusGroup({
@@ -28,6 +30,7 @@ export function CollapsibleStatusGroup({
   children,
   startsOpen = true,
   configType = "research",
+  action,
 }: CollapsibleStatusGroupProps) {
   const [isOpen, setIsOpen] = useState(() => startsOpen);
 
@@ -58,9 +61,11 @@ export function CollapsibleStatusGroup({
         <span className="font-medium">{config.label}</span>
         <span className="text-muted-foreground text-xs">{count}</span>
         <div className="flex-1" />
-        <button className="p-1 hover:bg-white/10 opacity-0 group-hover/status:opacity-100 transition-opacity">
-          <IconPlus className="size-3.5 text-muted-foreground" />
-        </button>
+        {action ?? (
+          <button className="p-1 hover:bg-white/10 opacity-0 group-hover/status:opacity-100 transition-opacity">
+            <IconPlus className="size-3.5 text-muted-foreground" />
+          </button>
+        )}
       </div>
 
       {isOpen && children}

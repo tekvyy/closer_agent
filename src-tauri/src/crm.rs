@@ -1,5 +1,5 @@
 //! Push to CRM: send the people picked in the People list to a CRM that accepts them
-//! (Gina's CRM at `/api/research/people`), using a connection key made in that CRM.
+//! (a CRM that offers `/api/research/people`), using a connection key made in that CRM.
 //!
 //! The key lives in the local database next to everything else the app stores, and is
 //! never sent back to the window: the frontend only learns whether a connection exists.
@@ -80,8 +80,8 @@ pub fn create_table(conn: &Connection) -> rusqlite::Result<()> {
     )
 }
 
-/// The CRM's address as typed or pasted: `ginaj.me`, `https://ginaj.me/admin/` and
-/// `https://ginaj.me` all become `https://ginaj.me`. Plain http only for this computer.
+/// The CRM's address as typed or pasted: `crm.example.com`, `https://crm.example.com/admin/` and
+/// `https://crm.example.com` all become `https://crm.example.com`. Plain http only for this computer.
 fn normalise_url(input: &str) -> Result<String, String> {
     let trimmed = input.trim().trim_end_matches('/');
     let with_scheme = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
@@ -95,7 +95,7 @@ fn normalise_url(input: &str) -> Result<String, String> {
     let host_and_port = rest.split('/').next().unwrap_or("");
     let host = host_and_port.split(':').next().unwrap_or("");
     if host.is_empty() || !host.contains('.') && host != "localhost" {
-        return Err("That address doesn't look right. It should be like ginaj.me.".into());
+        return Err("That address doesn't look right. It should be like crm.example.com.".into());
     }
     let local = host == "localhost" || host == "127.0.0.1";
     if scheme == "http" && !local {
@@ -323,16 +323,19 @@ mod tests {
 
     #[test]
     fn tidies_the_address() {
-        assert_eq!(normalise_url("ginaj.me").unwrap(), "https://ginaj.me");
         assert_eq!(
-            normalise_url(" https://ginaj.me/admin/ ").unwrap(),
-            "https://ginaj.me"
+            normalise_url("crm.example.com").unwrap(),
+            "https://crm.example.com"
+        );
+        assert_eq!(
+            normalise_url(" https://crm.example.com/admin/ ").unwrap(),
+            "https://crm.example.com"
         );
         assert_eq!(
             normalise_url("http://localhost:3000").unwrap(),
             "http://localhost:3000"
         );
-        assert!(normalise_url("http://ginaj.me").is_err());
+        assert!(normalise_url("http://crm.example.com").is_err());
         assert!(normalise_url("").is_err());
         assert!(normalise_url("nonsense").is_err());
     }

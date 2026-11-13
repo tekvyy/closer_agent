@@ -1,5 +1,12 @@
 import { Link } from "react-router-dom";
-import { IconBuilding, IconTrash, IconSearch, IconMessage, IconSend } from "@tabler/icons-react";
+import {
+  IconBuilding,
+  IconMail,
+  IconTrash,
+  IconSearch,
+  IconMessage,
+  IconSend,
+} from "@tabler/icons-react";
 import { useCrmStore } from "@/lib/store/crm-store";
 import { SelectableEntityList, SelectableRow } from "@/components/selection";
 import type { ActionConfig } from "@/components/selection";
@@ -162,6 +169,24 @@ function PersonRow({ person }: { person: PersonWithCompany }) {
         <span className="font-medium">{fullName}</span>
         {person.title && <span className="text-muted-foreground ml-2">{person.title}</span>}
       </Link>
+
+      {person.email ? (
+        <div
+          title={person.email}
+          className="w-56 shrink-0 flex items-center gap-1.5 text-xs text-muted-foreground select-text"
+        >
+          <IconMail className="size-3.5 shrink-0" />
+          <span className="truncate">{person.email}</span>
+        </div>
+      ) : (
+        <div
+          title="No email yet. Research finds it."
+          className="w-56 shrink-0 flex items-center gap-1.5 text-xs text-muted-foreground/50"
+        >
+          <IconMail className="size-3.5 shrink-0" />
+          <span className="truncate italic">No email</span>
+        </div>
+      )}
 
       {person.leadId && person.companyName ? (
         <Link

@@ -6,6 +6,7 @@ import { IconX, IconCommand } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { useSelectionStore } from "@/lib/store/selection-store";
 import { ActionCommandMenu, type ActionConfig } from "./action-command-menu";
+import { useSelectionContext } from "./selection-provider";
 
 interface FloatingActionBarProps {
   actions: ActionConfig[];
@@ -16,6 +17,8 @@ export function FloatingActionBar({ actions }: FloatingActionBarProps) {
   const selectedCount = useSelectionStore((state) => state.getSelectedCount());
   const clearAll = useSelectionStore((state) => state.clearAll);
   const getSelectedIds = useSelectionStore((state) => state.getSelectedIds);
+  const selectAll = useSelectionStore((state) => state.selectAll);
+  const { allIds } = useSelectionContext();
   // Everyday actions get their own button; the rest stay in the menu
   const quickActions = actions.filter((action) => !action.destructive);
 
@@ -56,6 +59,17 @@ export function FloatingActionBar({ actions }: FloatingActionBarProps) {
               <IconX className="size-4" />
               <span className="sr-only">Clear selection</span>
             </Button>
+
+            {selectedCount < allIds.length && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => selectAll(allIds)}
+                className="rounded text-muted-foreground hover:text-foreground"
+              >
+                Select all {allIds.length}
+              </Button>
+            )}
 
             <div className="h-4 w-px bg-border mx-1" />
 

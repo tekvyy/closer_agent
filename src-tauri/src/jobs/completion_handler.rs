@@ -366,7 +366,9 @@ impl CompletionHandler {
                     for p in people_data {
                         let first_name = extract_first_name(p);
                         let last_name = extract_last_name(p);
-                        let email = p.get("email").and_then(|v| v.as_str());
+                        let email = crate::jobs::enrichment::clean_email(
+                            p.get("email").and_then(|v| v.as_str()),
+                        );
                         let title = p.get("title").and_then(|v| v.as_str());
                         let linkedin_url = p.get("linkedinUrl").and_then(|v| v.as_str());
                         let management_level = p.get("managementLevel").and_then(|v| v.as_str());
@@ -382,7 +384,7 @@ impl CompletionHandler {
                             // Only fill in NULL fields — preserve any user edits or prior enrichment
                             tx.execute(
                                 "UPDATE people SET
-                                    email = COALESCE(email, ?1),
+                                    email = COALESCE(NULLIF(TRIM(email), ''), ?1),
                                     title = COALESCE(title, ?2),
                                     linkedin_url = COALESCE(linkedin_url, ?3),
                                     management_level = COALESCE(management_level, ?4),

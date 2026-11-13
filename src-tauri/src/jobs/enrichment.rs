@@ -32,3 +32,54 @@ pub struct PersonEnrichment {
     pub linkedin_url: Option<String>,
     pub year_joined: Option<i64>,
 }
+
+/// An email address as research reported it, or None when it isn't one ("Not found",
+/// "N/A", a sentence, a mailto: link with extras). Trimmed and lowercased.
+pub fn clean_email(value: Option<&str>) -> Option<String> {
+    let text = value?
+        .trim()
+        .trim_start_matches("mailto:")
+        .trim()
+        .to_lowercase();
+    if text.len() > 254
+        || text
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, '<' | '>' | '"' | ',' | ';' | '?'))
+    {
+        return None;
+    }
+    let (local, domain) = text.split_once('@')?;
+    let domain_ok = domain.contains('.')
+        && !domain.contains('@')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && !domain.contains("..");
+    if local.is_empty() || !domain_ok {
+        return None;
+    }
+    Some(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_email;
+
+    #[test]
+    fn keeps_real_addresses_and_drops_the_rest() {
+        assert_eq!(
+            clean_email(Some(" Jane.Doe@Example.com ")),
+            Some("jane.doe@example.com".into())
+        );
+        assert_eq!(
+            clean_email(Some("mailto:jane@example.co.uk")),
+            Some("jane@example.co.uk".into())
+        );
+        assert_eq!(clean_email(Some("Not found")), None);
+        assert_eq!(clean_email(Some("N/A")), None);
+        assert_eq!(clean_email(Some("")), None);
+        assert_eq!(clean_email(Some("jane@localhost")), None);
+        assert_eq!(clean_email(Some("jane@example.com (guessed)")), None);
+        assert_eq!(clean_email(Some("a@b@example.com")), None);
+        assert_eq!(clean_email(None), None);
+    }
+}

@@ -111,7 +111,7 @@ function ConnectionForm() {
             id="crm-url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://ginaj.me"
+            placeholder="https://crm.example.com"
             autoComplete="off"
             spellCheck={false}
             required

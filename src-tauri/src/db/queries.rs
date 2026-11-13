@@ -1,5 +1,5 @@
 use crate::db::schema::*;
-use crate::jobs::enrichment::{LeadEnrichment, PersonEnrichment};
+use crate::jobs::enrichment::{clean_email, LeadEnrichment, PersonEnrichment};
 use rusqlite::{params, Connection, Result as SqliteResult};
 
 // ============================================================================
@@ -1259,14 +1259,14 @@ pub fn enrich_person<C: std::ops::Deref<Target = Connection>>(
 ) -> SqliteResult<usize> {
     conn.execute(
         "UPDATE people SET
-            email = COALESCE(email, ?1),
+            email = COALESCE(NULLIF(TRIM(email), ''), ?1),
             title = COALESCE(title, ?2),
             management_level = COALESCE(management_level, ?3),
             linkedin_url = COALESCE(linkedin_url, ?4),
             year_joined = COALESCE(year_joined, ?5)
          WHERE id = ?6",
         params![
-            e.email,
+            clean_email(e.email.as_deref()),
             e.title,
             e.management_level,
             e.linkedin_url,
