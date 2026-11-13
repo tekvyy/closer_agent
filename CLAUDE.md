@@ -102,3 +102,24 @@ Tables: `leads`, `people`, `prompts`, `scoring_config`, `lead_scores`
 | Backend setup  | `src-tauri/src/lib.rs`          |
 | Job queue      | `src-tauri/src/jobs/queue.rs`   |
 | DB schema      | `src-tauri/src/db/schema.rs`    |
+
+## Gina's CRM (where "Push to CRM" goes)
+
+This fork (tekvyy/closer_agent) is Gina J. Waota's research tool, which she calls "GynaJ research". It
+pushes the people she selects into her CRM at https://ginaj.me.
+
+- **CRM code on this laptop:** `/Users/singh/Desktop/Gyna/crm` (repo tekvyy/gina_crm, a Next.js app
+  that Railway auto-deploys from `main`). Its `README.md` has a "Research tool (Closer)" section.
+- **The CRM side of a push:** `src/app/api/research/people/route.ts` (key check, limits, up to 200 people
+  per push) and `src/core/research-push.ts` (creates contacts with source `research`, fills blanks on
+  existing ones, leaves archived ones alone, returns created/updated/unchanged/archived/invalid per person).
+- **This side:** `src-tauri/src/crm.rs` (saves the address and `gk_…` key, `normalise_url` requires
+  https except for localhost, sends the push), `src/components/crm/crm-connection.tsx`,
+  `src/lib/store/crm-store.ts`, `src/lib/tauri/commands.ts`, and the push button in
+  `src/components/people/people-list-with-selection.tsx`.
+- **Debugging a push:** a bug can be on either side, so check both. Test against a local CRM
+  before touching production: `npx next dev -p 3100` in the CRM (port 3000 is taken by this app's
+  Vite server), then connect Closer to `http://localhost:3100` with a key made at `/admin/research-tool`.
+- **Releases:** pushing a `v*` tag builds a release and auto-updates every installed copy, Gina's included.
+  Tags need a message (`git tag -a`, since `tag.gpgsign` is on). Use `gh … -R tekvyy/closer_agent`, because
+  `gh` defaults to the upstream chaitanyya/sales.
