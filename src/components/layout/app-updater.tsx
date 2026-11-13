@@ -134,8 +134,10 @@ export function AppUpdateRow() {
       ) : (
         <IconDownload className="size-3.5" />
       )}
-      <span className="flex-1 text-left">{version ? `Version ${version}` : "Updates"}</span>
-      <span className={`text-xs ${tone}`}>{label}</span>
+      <span className="flex-1 text-left whitespace-nowrap">
+        {version ? `v${version}` : "Updates"}
+      </span>
+      <span className={`text-xs whitespace-nowrap ${tone}`}>{label}</span>
     </button>
   );
 }

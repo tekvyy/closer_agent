@@ -22,10 +22,11 @@ function Checkbox({ className, ...props }: React.ComponentProps<typeof CheckboxP
     >
       <CheckboxPrimitive.Indicator
         data-slot="checkbox-indicator"
-        className="flex items-center justify-center text-current"
+        className="group/indicator flex items-center justify-center text-current"
       >
-        <IconCheck className="size-3 data-[state=indeterminate]:hidden" />
-        <IconMinus className="size-3 hidden data-[state=indeterminate]:block" />
+        {/* The indicator carries data-state, so the icons read it through the group */}
+        <IconCheck className="size-3 group-data-[state=indeterminate]/indicator:hidden" />
+        <IconMinus className="size-3 hidden group-data-[state=indeterminate]/indicator:block" />
       </CheckboxPrimitive.Indicator>
     </CheckboxPrimitive.Root>
   );
