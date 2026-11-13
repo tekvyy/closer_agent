@@ -1,7 +1,9 @@
 import { Link } from "react-router-dom";
 import {
   IconBuilding,
+  IconLoader2,
   IconMail,
+  IconMailOff,
   IconTrash,
   IconSearch,
   IconMessage,
@@ -170,23 +172,7 @@ function PersonRow({ person }: { person: PersonWithCompany }) {
         {person.title && <span className="text-muted-foreground ml-2">{person.title}</span>}
       </Link>
 
-      {person.email ? (
-        <div
-          title={person.email}
-          className="w-56 shrink-0 flex items-center gap-1.5 text-xs text-muted-foreground select-text"
-        >
-          <IconMail className="size-3.5 shrink-0" />
-          <span className="truncate">{person.email}</span>
-        </div>
-      ) : (
-        <div
-          title="No email yet. Research finds it."
-          className="w-56 shrink-0 flex items-center gap-1.5 text-xs text-muted-foreground/50"
-        >
-          <IconMail className="size-3.5 shrink-0" />
-          <span className="truncate italic">No email</span>
-        </div>
-      )}
+      <EmailCell email={person.email} researchStatus={person.researchStatus} />
 
       {person.leadId && person.companyName ? (
         <Link
@@ -205,5 +191,61 @@ function PersonRow({ person }: { person: PersonWithCompany }) {
 
       <ResearchStatusBadge status={person.researchStatus} size="sm" />
     </SelectableRow>
+  );
+}
+
+/**
+ * The person's email, or why there isn't one: research ran and found nothing, research is
+ * running, or nobody has researched them yet.
+ */
+function EmailCell({
+  email,
+  researchStatus,
+}: {
+  email: string | null;
+  researchStatus: string | null;
+}) {
+  const cell = "w-60 shrink-0 flex items-center gap-1.5 text-xs";
+  if (email) {
+    return (
+      <div title={email} className={`${cell} text-foreground select-text`}>
+        <IconMail className="size-3.5 shrink-0 text-green-500" />
+        <span className="truncate">{email}</span>
+      </div>
+    );
+  }
+  if (researchStatus === "in_progress") {
+    return (
+      <div title="Research is looking for their email" className={`${cell} text-muted-foreground`}>
+        <IconLoader2 className="size-3.5 shrink-0 animate-spin" />
+        <span className="truncate">Searching…</span>
+      </div>
+    );
+  }
+  if (researchStatus === "completed") {
+    return (
+      <div
+        title="Research couldn't find their email. Their profile lists what was searched."
+        className={`${cell} text-amber-500 font-medium`}
+      >
+        <IconMailOff className="size-3.5 shrink-0" />
+        <span className="truncate">Email not found</span>
+      </div>
+    );
+  }
+  return (
+    <div
+      title={
+        researchStatus === "failed"
+          ? "Research failed. Run it again to look for their email."
+          : "Run research to look for their email"
+      }
+      className={`${cell} text-muted-foreground/60`}
+    >
+      <IconMail className="size-3.5 shrink-0" />
+      <span className="truncate italic">
+        {researchStatus === "failed" ? "Research failed" : "Not researched yet"}
+      </span>
+    </div>
   );
 }
