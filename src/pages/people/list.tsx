@@ -34,6 +34,7 @@ export default function PeopleListPage() {
       lastName: person.lastName,
       title: person.title,
       email: person.email,
+      emailSource: person.emailSource,
       linkedinUrl: person.linkedinUrl,
       leadId: person.leadId,
       companyName: person.companyName,
@@ -43,8 +44,9 @@ export default function PeopleListPage() {
     groupedPeople[status].push(personForList as PersonWithCompany);
   }
 
-  const unresearchedIds = people
-    .filter((person) => person.researchStatus === "pending")
+  // People their company's website gave no email for, and nobody has searched for yet
+  const missingEmailIds = people
+    .filter((person) => person.researchStatus === "pending" && !person.email)
     .map((person) => person.id);
 
   if (isLoading && people.length === 0) {
@@ -78,9 +80,12 @@ export default function PeopleListPage() {
         </div>
         <div className="flex-1" />
         <ResearchAllButton
-          ids={unresearchedIds}
+          ids={missingEmailIds}
           start={startPersonResearch}
+          what="the email search"
           noun={["person", "people"]}
+          label={(count) => `Find ${count} missing ${count === 1 ? "email" : "emails"}`}
+          title="Searches for each person whose company website gave no email. Each search uses some of your AI allowance."
         />
         <AddPersonModal leads={leads} onSuccess={refresh} />
       </header>

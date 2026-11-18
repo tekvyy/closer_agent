@@ -149,7 +149,6 @@ pub fn run() {
             // Settings commands
             commands::get_settings,
             commands::update_settings,
-            commands::set_auto_research,
             commands::cancel_queued_jobs,
             // CRM commands
             crm::get_crm_connection,

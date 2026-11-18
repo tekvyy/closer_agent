@@ -1,5 +1,9 @@
 {
   "defaultModel": "claude-sonnet-5-5",
+  "researchModels": {
+    "claude": "claude-sonnet-5-5",
+    "codex": "gpt-6-luna"
+  },
   "models": [
     {
       "value": "claude-fable-5-1",

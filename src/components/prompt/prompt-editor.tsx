@@ -3,8 +3,6 @@ import { Button } from "@/components/ui/button";
 import {
   IconDeviceFloppy,
   IconLoader2,
-  IconBuilding,
-  IconUser,
   IconInfoCircle,
   IconMessageCircle,
 } from "@tabler/icons-react";
@@ -34,7 +32,7 @@ export function PromptEditor({ prompts }: PromptEditorProps) {
     startTransition(async () => {
       try {
         await savePromptByType(activeTab, currentContent);
-        toast.success("Prompt saved");
+        toast.success("Saved");
       } catch (error) {
         toast.error("Failed to save prompt", {
           description: error instanceof Error ? error.message : "An unexpected error occurred",
@@ -45,10 +43,10 @@ export function PromptEditor({ prompts }: PromptEditorProps) {
     });
   };
 
+  // Company and person research are built in now (who to contact and their emails), so the
+  // only words to edit are who you are and how talking points should read
   const tabs = [
     { id: "company_overview" as const, label: "Company Overview", icon: IconInfoCircle },
-    { id: "company" as const, label: "Company", icon: IconBuilding },
-    { id: "person" as const, label: "Person", icon: IconUser },
     { id: "conversation_topics" as const, label: "Conversation", icon: IconMessageCircle },
   ];
 
@@ -83,36 +81,12 @@ export function PromptEditor({ prompts }: PromptEditorProps) {
             {activeTab === "company_overview" && (
               <>
                 <p>
-                  Describe your company and ideal customer profile. This context is injected into{" "}
-                  <strong>all</strong> research prompts.
+                  Describe what you do and who you help. Closer uses this to decide which people at
+                  each company are worth contacting.
                 </p>
                 <p className="text-xs text-muted-foreground/70">
-                  Tip: Include what you do, who you sell to, problems you solve, and key
-                  differentiators.
-                </p>
-              </>
-            )}
-            {activeTab === "company" && (
-              <>
-                <p>
-                  Instructions for comapny research. The target company&apos;s details are{" "}
-                  <strong>automatically provided</strong>.
-                </p>
-                <p className="text-xs text-muted-foreground/70">
-                  Auto-injected: Company name, website, industry, size, LinkedIn URL, location.
-                  Focus on what to discover.
-                </p>
-              </>
-            )}
-            {activeTab === "person" && (
-              <>
-                <p>
-                  Instructions for researching people. The person&apos;s details AND their company
-                  info are <strong>automatically provided</strong>.
-                </p>
-                <p className="text-xs text-muted-foreground/70">
-                  Auto-injected: Name, title, email, LinkedIn, company details. Focus on what to
-                  research about them.
+                  Tip: say what you offer, who usually buys it (for example executive directors or
+                  HR leaders), and the kind of organization you work with.
                 </p>
               </>
             )}
@@ -137,9 +111,7 @@ export function PromptEditor({ prompts }: PromptEditorProps) {
               placeholder={
                 activeTab === "company_overview"
                   ? "Enter details about your business, products, services, target customers, value proposition, etc..."
-                  : activeTab === "conversation_topics"
-                    ? "Enter your conversation topics prompt template..."
-                    : `Enter your ${activeTab} research prompt template...`
+                  : "Enter your conversation topics prompt template..."
               }
               className="w-full h-96 bg-white/5 border border-white/5 p-3 text-xs font-mono resize-none rounded focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
@@ -151,17 +123,7 @@ export function PromptEditor({ prompts }: PromptEditorProps) {
                 ) : (
                   <IconDeviceFloppy className="size-4" />
                 )}
-                {isPending || isSaving
-                  ? "Saving..."
-                  : `Save ${
-                      activeTab === "company_overview"
-                        ? "Company Overview"
-                        : activeTab === "company"
-                          ? "Company Prompt"
-                          : activeTab === "person"
-                            ? "Person Prompt"
-                            : "Conversation Prompt"
-                    }`}
+                {isPending || isSaving ? "Saving..." : "Save"}
               </Button>
             </div>
           </div>

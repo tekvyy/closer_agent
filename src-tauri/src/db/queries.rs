@@ -1,5 +1,5 @@
 use crate::db::schema::*;
-use crate::jobs::enrichment::{clean_email, LeadEnrichment, PersonEnrichment};
+use crate::jobs::enrichment::{clean_email, clean_email_source, LeadEnrichment, PersonEnrichment};
 use rusqlite::{params, Connection, Result as SqliteResult};
 
 // ============================================================================
@@ -178,7 +178,7 @@ pub fn get_person(conn: &Connection, id: i64) -> SqliteResult<Option<PersonWithC
         "SELECT p.id, p.lead_id, p.first_name, p.last_name, p.email, p.title, p.management_level,
                 p.linkedin_url, p.year_joined, p.person_profile, p.research_status, p.researched_at,
                 p.user_status, p.conversation_topics, p.conversation_generated_at, p.created_at,
-                l.company_name, l.website, l.industry
+                l.company_name, l.website, l.industry, p.email_source
          FROM people p
          LEFT JOIN leads l ON p.lead_id = l.id
          WHERE p.id = ?1",
@@ -208,6 +208,7 @@ pub fn get_person(conn: &Connection, id: i64) -> SqliteResult<Option<PersonWithC
             conversation_topics: row.get(13)?,
             conversation_generated_at: row.get(14)?,
             created_at: row.get(15)?,
+            email_source: row.get(19)?,
             company_name: row.get(16)?,
             company_website: row.get(17)?,
             company_industry: row.get(18)?,
@@ -221,7 +222,8 @@ pub fn get_person_raw(conn: &Connection, id: i64) -> SqliteResult<Option<Person>
     let mut stmt = conn.prepare(
         "SELECT id, lead_id, first_name, last_name, email, title, management_level,
                 linkedin_url, year_joined, person_profile, research_status, researched_at,
-                user_status, conversation_topics, conversation_generated_at, created_at
+                user_status, conversation_topics, conversation_generated_at, created_at,
+                email_source
          FROM people WHERE id = ?1",
     )?;
 
@@ -249,6 +251,7 @@ pub fn get_person_raw(conn: &Connection, id: i64) -> SqliteResult<Option<Person>
             conversation_topics: row.get(13)?,
             conversation_generated_at: row.get(14)?,
             created_at: row.get(15)?,
+            email_source: row.get(16)?,
         }))
     } else {
         Ok(None)
@@ -259,7 +262,8 @@ pub fn get_people_for_lead(conn: &Connection, lead_id: i64) -> SqliteResult<Vec<
     let mut stmt = conn.prepare(
         "SELECT id, lead_id, first_name, last_name, email, title, management_level,
                 linkedin_url, year_joined, person_profile, research_status, researched_at,
-                user_status, conversation_topics, conversation_generated_at, created_at
+                user_status, conversation_topics, conversation_generated_at, created_at,
+                email_source
          FROM people WHERE lead_id = ?1 ORDER BY last_name ASC, first_name ASC",
     )?;
 
@@ -285,6 +289,7 @@ pub fn get_people_for_lead(conn: &Connection, lead_id: i64) -> SqliteResult<Vec<
             conversation_topics: row.get(13)?,
             conversation_generated_at: row.get(14)?,
             created_at: row.get(15)?,
+            email_source: row.get(16)?,
         })
     })?;
 
@@ -296,7 +301,7 @@ pub fn get_all_people(conn: &Connection) -> SqliteResult<Vec<PersonWithCompany>>
         "SELECT p.id, p.lead_id, p.first_name, p.last_name, p.email, p.title, p.management_level,
                 p.linkedin_url, p.year_joined, p.person_profile, p.research_status, p.researched_at,
                 p.user_status, p.conversation_topics, p.conversation_generated_at, p.created_at,
-                l.company_name, l.website, l.industry
+                l.company_name, l.website, l.industry, p.email_source
          FROM people p
          LEFT JOIN leads l ON p.lead_id = l.id
          ORDER BY p.last_name ASC, p.first_name ASC",
@@ -324,6 +329,7 @@ pub fn get_all_people(conn: &Connection) -> SqliteResult<Vec<PersonWithCompany>>
             conversation_topics: row.get(13)?,
             conversation_generated_at: row.get(14)?,
             created_at: row.get(15)?,
+            email_source: row.get(19)?,
             company_name: row.get(16)?,
             company_website: row.get(17)?,
             company_industry: row.get(18)?,
@@ -1156,54 +1162,32 @@ pub fn delete_job(conn: &Connection, job_id: &str) -> SqliteResult<()> {
 // ============================================================================
 
 pub fn get_settings(conn: &Connection) -> SqliteResult<Settings> {
-    let mut stmt = conn.prepare(
-        "SELECT model, use_chrome, auto_research, updated_at FROM settings WHERE id = 1",
-    )?;
+    let mut stmt = conn.prepare("SELECT model, updated_at FROM settings WHERE id = 1")?;
 
     let mut rows = stmt.query([])?;
 
     if let Some(row) = rows.next()? {
         Ok(Settings {
             model: row.get(0)?,
-            use_chrome: row.get::<_, i64>(1)? != 0,
-            auto_research: row.get::<_, i64>(2)? != 0,
-            updated_at: row.get(3)?,
+            updated_at: row.get(1)?,
         })
     } else {
         // Return defaults if no settings exist
         Ok(Settings {
             model: crate::model_config::default_model().to_string(),
-            use_chrome: false,
-            auto_research: true,
             updated_at: chrono::Utc::now().timestamp_millis(),
         })
     }
 }
 
-pub fn update_settings(conn: &Connection, model: &str, use_chrome: bool) -> SqliteResult<()> {
+pub fn update_settings(conn: &Connection, model: &str) -> SqliteResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    eprintln!(
-        "[db] Executing UPDATE settings: model='{}', use_chrome={}",
-        model, use_chrome
-    );
-    let rows_affected = conn.execute(
-        // Upsert rather than REPLACE so columns not set here keep their values
-        "INSERT INTO settings (id, model, use_chrome, updated_at) VALUES (1, ?1, ?2, ?3)
-         ON CONFLICT(id) DO UPDATE SET
-            model = excluded.model, use_chrome = excluded.use_chrome, updated_at = excluded.updated_at",
-        params![model, use_chrome as i64, now],
-    )?;
-    eprintln!(
-        "[db] UPDATE settings completed: {} rows affected",
-        rows_affected
-    );
-    Ok(())
-}
-
-pub fn set_auto_research(conn: &Connection, enabled: bool) -> SqliteResult<()> {
     conn.execute(
-        "UPDATE settings SET auto_research = ?1, updated_at = ?2 WHERE id = 1",
-        params![enabled as i64, chrono::Utc::now().timestamp_millis()],
+        // Upsert rather than REPLACE so columns not set here keep their values
+        "INSERT INTO settings (id, model, use_chrome, updated_at) VALUES (1, ?1, 0, ?2)
+         ON CONFLICT(id) DO UPDATE SET
+            model = excluded.model, updated_at = excluded.updated_at",
+        params![model, now],
     )?;
     Ok(())
 }
@@ -1259,6 +1243,8 @@ pub fn enrich_person<C: std::ops::Deref<Target = Connection>>(
 ) -> SqliteResult<usize> {
     conn.execute(
         "UPDATE people SET
+            email_source = CASE WHEN NULLIF(TRIM(email), '') IS NULL AND ?1 IS NOT NULL
+                                THEN ?7 ELSE email_source END,
             email = COALESCE(NULLIF(TRIM(email), ''), ?1),
             title = COALESCE(title, ?2),
             management_level = COALESCE(management_level, ?3),
@@ -1271,7 +1257,8 @@ pub fn enrich_person<C: std::ops::Deref<Target = Connection>>(
             e.management_level,
             e.linkedin_url,
             e.year_joined,
-            person_id
+            person_id,
+            clean_email_source(e.email_source.as_deref())
         ],
     )
 }

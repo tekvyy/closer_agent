@@ -33,7 +33,7 @@ export function StreamPanelContent() {
   if (!status) {
     return (
       <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-        No active stream
+        Nothing to show yet. Pick a job above, or start some research.
       </div>
     );
   }

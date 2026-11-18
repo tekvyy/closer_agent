@@ -17,6 +17,7 @@ use std::sync::Arc;
 use tauri::AppHandle;
 
 use super::enrichment::{LeadEnrichment, PersonEnrichment};
+use super::found_people::{finalize_people, FoundPerson};
 use super::result_parser::{JobMetadata, JobType};
 use super::stream_processor::CompletionContext;
 use crate::db;
@@ -162,22 +163,33 @@ impl CompletionHandler {
     ) -> Result<VerifiedOutputs, CompletionError> {
         let primary_path = &metadata.primary_output_path;
 
-        // Check primary file exists
-        if !primary_path.exists() {
-            return Err(CompletionError::FileNotFound(primary_path.clone()));
-        }
+        // Company research is asked for the people first and a short summary last. The
+        // people are the result, so a missing summary doesn't throw them away.
+        let people_written = metadata.job_type == JobType::CompanyResearch
+            && metadata
+                .secondary_output_path
+                .as_ref()
+                .is_some_and(|path| path.exists());
 
-        // Read primary content
-        let primary_content = fs::read_to_string(primary_path)
-            .map_err(|e| CompletionError::FileReadError(primary_path.clone(), e))?;
-
-        // Validate primary content is not empty
-        if primary_content.trim().is_empty() {
+        let primary_content = if !primary_path.exists() {
+            if !people_written {
+                return Err(CompletionError::FileNotFound(primary_path.clone()));
+            }
+            String::new()
+        } else {
+            fs::read_to_string(primary_path)
+                .map_err(|e| CompletionError::FileReadError(primary_path.clone(), e))?
+        };
+        let primary_content = if !primary_content.trim().is_empty() {
+            primary_content
+        } else if people_written {
+            "No summary was written for this company.".to_string()
+        } else {
             return Err(CompletionError::ValidationError(format!(
                 "Primary output file is empty: {:?}",
                 primary_path
             )));
-        }
+        };
 
         // Read secondary content if path provided
         let secondary_content = if let Some(secondary_path) = &metadata.secondary_output_path {
@@ -359,55 +371,29 @@ impl CompletionHandler {
             } => {
                 let lead_id = metadata.entity_id;
 
-                // Upsert people by (lead_id, first_name, last_name) so existing IDs and
-                // already-researched data survive a re-run of company research.
                 if let Some(people_data) = people {
-                    let now = chrono::Utc::now().timestamp();
-                    for p in people_data {
-                        let first_name = extract_first_name(p);
-                        let last_name = extract_last_name(p);
-                        let email = crate::jobs::enrichment::clean_email(
-                            p.get("email").and_then(|v| v.as_str()),
-                        );
-                        let title = p.get("title").and_then(|v| v.as_str());
-                        let linkedin_url = p.get("linkedinUrl").and_then(|v| v.as_str());
-                        let management_level = p.get("managementLevel").and_then(|v| v.as_str());
-                        let year_joined = p.get("yearJoined").and_then(|v| v.as_i64());
-
-                        let existing_id: Option<i64> = tx.query_row(
-                            "SELECT id FROM people WHERE lead_id = ?1 AND first_name = ?2 AND last_name = ?3 LIMIT 1",
-                            rusqlite::params![lead_id, first_name, last_name],
+                    // The company's own domain: the website we were given, or the one
+                    // research confirmed
+                    let known_website: Option<String> = tx
+                        .query_row(
+                            "SELECT website FROM leads WHERE id = ?1",
+                            rusqlite::params![lead_id],
                             |row| row.get(0),
-                        ).optional().map_err(|e| CompletionError::DatabaseError(e.to_string()))?;
-
-                        if let Some(id) = existing_id {
-                            // Only fill in NULL fields — preserve any user edits or prior enrichment
-                            tx.execute(
-                                "UPDATE people SET
-                                    email = COALESCE(NULLIF(TRIM(email), ''), ?1),
-                                    title = COALESCE(title, ?2),
-                                    linkedin_url = COALESCE(linkedin_url, ?3),
-                                    management_level = COALESCE(management_level, ?4),
-                                    year_joined = COALESCE(year_joined, ?5)
-                                 WHERE id = ?6",
-                                rusqlite::params![
-                                    email,
-                                    title,
-                                    linkedin_url,
-                                    management_level,
-                                    year_joined,
-                                    id
-                                ],
-                            )
-                            .map_err(|e| CompletionError::DatabaseError(e.to_string()))?;
-                        } else {
-                            tx.execute(
-                                "INSERT INTO people (first_name, last_name, email, title, linkedin_url, management_level, year_joined, lead_id, research_status, user_status, created_at)
-                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', 'new', ?9)",
-                                rusqlite::params![first_name, last_name, email, title, linkedin_url, management_level, year_joined, lead_id, now],
-                            ).map_err(|e| CompletionError::DatabaseError(e.to_string()))?;
-                        }
-                    }
+                        )
+                        .optional()
+                        .map_err(|e| CompletionError::DatabaseError(e.to_string()))?
+                        .flatten();
+                    let site_domain = known_website
+                        .as_deref()
+                        .or(enrichment.as_ref().and_then(|e| e.website.as_deref()))
+                        .and_then(website_domain);
+                    store_found_people(
+                        tx,
+                        lead_id,
+                        finalize_people(people_data, enrichment.as_ref(), site_domain.as_deref()),
+                        chrono::Utc::now().timestamp(),
+                    )
+                    .map_err(|e| CompletionError::DatabaseError(e.to_string()))?;
                 }
 
                 // Update lead with company profile
@@ -435,10 +421,18 @@ impl CompletionHandler {
             } => {
                 let person_id = metadata.entity_id;
                 let now = chrono::Utc::now().timestamp();
-                let rows = tx.execute(
-                    "UPDATE people SET research_status = ?1, person_profile = ?2, researched_at = ?3 WHERE id = ?4",
-                    rusqlite::params!["completed", profile, now, person_id],
-                ).map_err(|e| CompletionError::DatabaseError(e.to_string()))?;
+                let rows = tx
+                    .execute(
+                        // The note is a few lines. A full profile from an earlier version of
+                        // Closer is worth more than that, so it stays.
+                        "UPDATE people SET research_status = ?1,
+                            person_profile = CASE WHEN LENGTH(COALESCE(person_profile, '')) > 1000
+                                                  THEN person_profile ELSE ?2 END,
+                            researched_at = ?3
+                     WHERE id = ?4",
+                        rusqlite::params!["completed", profile, now, person_id],
+                    )
+                    .map_err(|e| CompletionError::DatabaseError(e.to_string()))?;
                 if rows == 0 {
                     return Err(CompletionError::ValidationError(format!(
                         "Person {} no longer exists; research output discarded",
@@ -759,7 +753,118 @@ impl CompletionHandler {
     }
 }
 
-/// Helper to extract first name from people JSON
+/// Save the people company research found for a lead. People are matched by
+/// (lead_id, first_name, last_name) so existing IDs, user edits and earlier research survive a
+/// re-run: only empty fields are filled.
+///
+/// Someone who arrives with an email is done, there being nothing else to research. Someone
+/// without one stays pending, which is what "Find missing emails" picks up.
+fn store_found_people(
+    conn: &rusqlite::Connection,
+    lead_id: i64,
+    people: Vec<FoundPerson>,
+    now: i64,
+) -> rusqlite::Result<()> {
+    for person in people {
+        let FoundPerson {
+            first_name,
+            last_name,
+            title,
+            linkedin_url,
+            management_level,
+            year_joined,
+            email,
+            email_source,
+            email_evidence,
+        } = person;
+        let note = email
+            .as_deref()
+            .map(|email| email_note(email, email_source, email_evidence.as_deref()));
+
+        let existing_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM people WHERE lead_id = ?1 AND first_name = ?2 AND last_name = ?3 LIMIT 1",
+                rusqlite::params![lead_id, first_name, last_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(id) = existing_id {
+            // ?1 fills the email only when the person had none; the source, note and
+            // "completed" follow that same condition so they always describe this email
+            conn.execute(
+                "UPDATE people SET
+                    email_source = CASE WHEN NULLIF(TRIM(email), '') IS NULL AND ?1 IS NOT NULL
+                                        THEN ?7 ELSE email_source END,
+                    person_profile = CASE WHEN NULLIF(TRIM(email), '') IS NULL AND ?1 IS NOT NULL
+                                          THEN COALESCE(person_profile, ?8) ELSE person_profile END,
+                    research_status = CASE WHEN NULLIF(TRIM(email), '') IS NULL AND ?1 IS NOT NULL
+                                                AND COALESCE(research_status, 'pending') IN ('pending', 'failed')
+                                           THEN 'completed' ELSE research_status END,
+                    researched_at = CASE WHEN NULLIF(TRIM(email), '') IS NULL AND ?1 IS NOT NULL
+                                         THEN COALESCE(researched_at, ?9) ELSE researched_at END,
+                    email = COALESCE(NULLIF(TRIM(email), ''), ?1),
+                    title = COALESCE(title, ?2),
+                    linkedin_url = COALESCE(linkedin_url, ?3),
+                    management_level = COALESCE(management_level, ?4),
+                    year_joined = COALESCE(year_joined, ?5)
+                 WHERE id = ?6",
+                rusqlite::params![
+                    email,
+                    title,
+                    linkedin_url,
+                    management_level,
+                    year_joined,
+                    id,
+                    email_source,
+                    note,
+                    now
+                ],
+            )?;
+        } else {
+            let (status, researched_at) = if email.is_some() {
+                ("completed", Some(now))
+            } else {
+                ("pending", None)
+            };
+            conn.execute(
+                "INSERT INTO people (first_name, last_name, email, email_source, person_profile, title, linkedin_url, management_level, year_joined, lead_id, research_status, researched_at, user_status, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'new', ?13)",
+                rusqlite::params![
+                    first_name,
+                    last_name,
+                    email,
+                    email_source,
+                    note,
+                    title,
+                    linkedin_url,
+                    management_level,
+                    year_joined,
+                    lead_id,
+                    status,
+                    researched_at,
+                    now
+                ],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// What a person's page says about an email that company research found
+fn email_note(email: &str, source: Option<&str>, evidence: Option<&str>) -> String {
+    let evidence = evidence.map(str::trim).filter(|text| !text.is_empty());
+    let how = match (source, evidence) {
+        (Some("pattern"), Some(evidence)) => {
+            format!("From the company's pattern, not seen published. Based on: {evidence}")
+        }
+        (Some("pattern"), None) => "From the company's pattern, not seen published.".to_string(),
+        (_, Some(evidence)) => format!("Published: {evidence}"),
+        (_, None) => "Found during company research.".to_string(),
+    };
+    format!("## Email\n\n{email}\n\n{how}\n")
+}
+
 /// "https://www.Acme.com/about" -> "acme.com"
 fn website_domain(website: &str) -> Option<String> {
     let rest = website.trim().to_lowercase();
@@ -769,32 +874,140 @@ fn website_domain(website: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_string())
 }
 
-fn extract_first_name(p: &serde_json::Value) -> String {
-    if let Some(fn_val) = p.get("firstName").and_then(|v| v.as_str()) {
-        fn_val.to_string()
-    } else if let Some(name) = p.get("name").and_then(|v| v.as_str()) {
-        let parts: Vec<&str> = name.split_whitespace().collect();
-        parts.first().unwrap_or(&"Unknown").to_string()
-    } else {
-        "Unknown".to_string()
-    }
-}
-
-/// Helper to extract last name from people JSON
-fn extract_last_name(p: &serde_json::Value) -> String {
-    if let Some(ln_val) = p.get("lastName").and_then(|v| v.as_str()) {
-        ln_val.to_string()
-    } else if let Some(name) = p.get("name").and_then(|v| v.as_str()) {
-        let parts: Vec<&str> = name.split_whitespace().collect();
-        parts.get(1..).unwrap_or(&[]).join(" ")
-    } else {
-        String::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::website_domain;
+    use super::{email_note, store_found_people, website_domain};
+    use crate::jobs::found_people::finalize_people;
+    use rusqlite::Connection;
+    use serde_json::json;
+
+    /// (email, email_source, research_status, has a note) for a person
+    fn row(conn: &Connection, first: &str) -> (Option<String>, Option<String>, String, bool) {
+        conn.query_row(
+            "SELECT email, email_source, research_status, person_profile IS NOT NULL
+             FROM people WHERE first_name = ?1",
+            [first],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn stores_found_people_and_keeps_what_was_already_there() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::init_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO leads (id, company_name, created_at) VALUES (7, 'Acme', 1)",
+            [],
+        )
+        .unwrap();
+        // Typed in by the user, with their own email; and one found earlier with no email
+        conn.execute_batch(
+            "INSERT INTO people (lead_id, first_name, last_name, email, title, research_status, user_status, created_at)
+             VALUES (7, 'Uma', 'Typed', 'uma@own.com', 'Owner', 'pending', 'new', 1);
+             INSERT INTO people (lead_id, first_name, last_name, research_status, user_status, created_at)
+             VALUES (7, 'Old', 'Timer', 'pending', 'new', 1);",
+        )
+        .unwrap();
+
+        let people = [
+            json!({"firstName": "Kizzy", "lastName": "Lewis", "title": "HR", "email": "klewis@acme.org", "emailSource": "published", "emailEvidence": "https://acme.org/team"}),
+            json!({"firstName": "Michael", "lastName": "Lucas"}),
+            json!({"firstName": "Jo", "lastName": "Williams-Neal"}),
+            json!({"firstName": "Uma", "lastName": "Typed", "email": "utyped@acme.org", "emailSource": "published", "title": "CEO"}),
+            json!({"firstName": "Old", "lastName": "Timer"}),
+        ];
+        store_found_people(
+            &conn,
+            7,
+            finalize_people(&people, None, Some("acme.org")),
+            100,
+        )
+        .unwrap();
+
+        let done = "completed".to_string();
+        let pending = "pending".to_string();
+        assert_eq!(
+            row(&conn, "Kizzy"),
+            (
+                Some("klewis@acme.org".into()),
+                Some("published".into()),
+                done.clone(),
+                true
+            )
+        );
+        // The pattern two published addresses agree on, applied and marked as such
+        assert_eq!(
+            row(&conn, "Michael"),
+            (
+                Some("mlucas@acme.org".into()),
+                Some("pattern".into()),
+                done.clone(),
+                true
+            )
+        );
+        // No email: waits for "Find missing emails"
+        assert_eq!(row(&conn, "Jo"), (None, None, pending.clone(), false));
+        // The user's own address and title win, and aren't labelled as research's
+        assert_eq!(
+            row(&conn, "Uma"),
+            (Some("uma@own.com".into()), None, pending, false)
+        );
+        let title: String = conn
+            .query_row(
+                "SELECT title FROM people WHERE first_name = 'Uma'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(title, "Owner");
+        // Someone already listed gets the email this run worked out
+        assert_eq!(
+            row(&conn, "Old"),
+            (
+                Some("otimer@acme.org".into()),
+                Some("pattern".into()),
+                done,
+                true
+            )
+        );
+
+        // Running again adds nobody and changes nothing
+        store_found_people(
+            &conn,
+            7,
+            finalize_people(&people, None, Some("acme.org")),
+            200,
+        )
+        .unwrap();
+        let (count, researched): (i64, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), MAX(researched_at) FROM people WHERE lead_id = 7",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((count, researched), (5, 100));
+    }
+
+    #[test]
+    fn email_note_says_how_the_address_is_known() {
+        assert_eq!(
+            email_note(
+                "jane@acme.org",
+                Some("published"),
+                Some("https://acme.org/team")
+            ),
+            "## Email\n\njane@acme.org\n\nPublished: https://acme.org/team\n"
+        );
+        assert!(
+            email_note("jane@acme.org", Some("pattern"), Some("bob.lee@acme.org")).contains(
+                "From the company's pattern, not seen published. Based on: bob.lee@acme.org"
+            )
+        );
+        assert!(email_note("jane@acme.org", None, Some("  "))
+            .contains("Found during company research."));
+    }
 
     #[test]
     fn website_domain_normalizes_urls() {

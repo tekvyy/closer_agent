@@ -53,6 +53,8 @@ export interface Person {
   conversationTopics: string | null;
   conversationGeneratedAt: number | null;
   createdAt: number;
+  /** "published" (seen on a page) or "pattern" (worked out from the company's addresses) */
+  emailSource: "published" | "pattern" | null;
 }
 
 export interface PersonWithCompany extends Person {

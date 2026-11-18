@@ -2,8 +2,7 @@
 
 import { Fragment, useEffect } from "react";
 import {
-  IconBrain,
-  IconBolt,
+  IconSparkles,
   IconChevronDown,
   IconLoader2,
   IconDownload,
@@ -23,13 +22,10 @@ import {
 import type { CliIssueKind } from "@/lib/tauri/commands";
 import {
   useSettingsStore,
-  MODEL_OPTIONS,
-  DEFAULT_MODEL,
-  PROVIDER_LABELS,
+  providerOf,
   PROVIDERS,
   CLI_NAMES,
   ACCOUNT_NAMES,
-  ModelId,
   ModelProvider,
 } from "@/lib/store/settings-store";
 
@@ -38,105 +34,77 @@ function openCliDialog(provider: ModelProvider, kind: CliIssueKind) {
   useSettingsStore.getState().setCliIssue({ provider, kind, message: "" });
 }
 
-const ModelIcon = ({ model, className }: { model: ModelId; className?: string }) => {
-  if (MODEL_OPTIONS.find((option) => option.value === model)?.icon === "brain") {
-    return <IconBrain className={className} />;
-  }
-  return <IconBolt className={className} />;
-};
-
-export function ModelSelector() {
-  const selectedModel = useSettingsStore((state) => state.selectedModel);
-  const setSelectedModel = useSettingsStore((state) => state.setSelectedModel);
+/**
+ * Which AI account research runs on. Closer picks the model itself, so the only choice
+ * is between a Claude and a ChatGPT account, for people who have both.
+ */
+export function AccountSelector() {
+  const provider = useSettingsStore((state) => providerOf(state.selectedModel));
+  const setProvider = useSettingsStore((state) => state.setProvider);
   const loadSettings = useSettingsStore((state) => state.loadSettings);
   const isInitialized = useSettingsStore((state) => state.isInitialized);
   const isUpdatingModel = useSettingsStore((state) => state.isUpdatingModel);
   const cliStatus = useSettingsStore((state) => state.cliStatus);
 
-  // Hide a provider only once its CLI is confirmed missing
-  const installedProviders = PROVIDERS.filter((provider) => cliStatus[provider]?.found !== false);
-  const missingProviders = PROVIDERS.filter((provider) => cliStatus[provider]?.found === false);
+  // Hide an account only once its CLI is confirmed missing
+  const installedProviders = PROVIDERS.filter((p) => cliStatus[p]?.found !== false);
+  const missingProviders = PROVIDERS.filter((p) => cliStatus[p]?.found === false);
 
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
 
-  const currentModel =
-    MODEL_OPTIONS.find((model) => model.value === selectedModel) ||
-    MODEL_OPTIONS.find((model) => model.value === DEFAULT_MODEL)!;
-
-  if (!isInitialized) {
-    return (
-      <div className="flex items-center gap-2 w-full px-2 py-1 text-muted-foreground text-sm">
-        <IconBolt className="size-3.5" />
-        <span>{MODEL_OPTIONS.find((model) => model.value === DEFAULT_MODEL)?.label}</span>
-      </div>
-    );
-  }
-
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
+          title="The AI account Closer researches with"
           className="flex items-center gap-2 w-full px-2 py-1 rounded text-muted-foreground hover:bg-white/5 hover:text-foreground transition-colors text-sm outline-none disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-          disabled={isUpdatingModel}
+          disabled={!isInitialized || isUpdatingModel}
         >
           {isUpdatingModel ? (
             <IconLoader2 className="size-3.5 animate-spin" />
           ) : (
-            <ModelIcon model={currentModel.value} className="size-3.5" />
+            <IconSparkles className="size-3.5" />
           )}
-          <span className="flex-1 text-left">{currentModel.label}</span>
+          <span className="flex-1 text-left">{ACCOUNT_NAMES[provider]} account</span>
           <IconChevronDown className="size-3" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
+        <DropdownMenuLabel>Research with</DropdownMenuLabel>
         <DropdownMenuRadioGroup
-          value={selectedModel}
-          onValueChange={(value) => !isUpdatingModel && setSelectedModel(value as ModelId)}
+          value={provider}
+          onValueChange={(value) => !isUpdatingModel && setProvider(value as ModelProvider)}
         >
-          {installedProviders.map((provider, index) => (
-            <Fragment key={provider}>
-              {index > 0 && <DropdownMenuSeparator />}
-              <DropdownMenuLabel>{PROVIDER_LABELS[provider]}</DropdownMenuLabel>
-              {MODEL_OPTIONS.filter((option) => option.provider === provider).map((option) => (
-                <DropdownMenuRadioItem
-                  key={option.value}
-                  value={option.value}
-                  disabled={isUpdatingModel}
-                >
-                  <ModelIcon model={option.value} className="size-4" />
-                  <span title={option.description}>{option.label}</span>
-                </DropdownMenuRadioItem>
-              ))}
-            </Fragment>
+          {installedProviders.map((p) => (
+            <DropdownMenuRadioItem key={p} value={p} disabled={isUpdatingModel}>
+              <span>{ACCOUNT_NAMES[p]} account</span>
+            </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>CLI tools</DropdownMenuLabel>
-        {missingProviders.map((provider) => (
-          <DropdownMenuItem key={provider} onSelect={() => openCliDialog(provider, "missing")}>
+        {missingProviders.map((p) => (
+          <DropdownMenuItem key={p} onSelect={() => openCliDialog(p, "missing")}>
             <IconDownload className="size-4" />
-            <span>
-              Install {CLI_NAMES[provider]} to use {ACCOUNT_NAMES[provider]} models
-            </span>
+            <span>Set up a {ACCOUNT_NAMES[p]} account</span>
           </DropdownMenuItem>
         ))}
-        {installedProviders.map((provider) =>
-          cliStatus[provider]?.loggedIn === false ? (
-            <DropdownMenuItem key={provider} onSelect={() => openCliDialog(provider, "login")}>
-              <IconLogin className="size-4" />
-              <span>
-                Sign in to {CLI_NAMES[provider]} ({ACCOUNT_NAMES[provider]} account)
-              </span>
-            </DropdownMenuItem>
-          ) : (
-            <DropdownMenuItem key={provider} onSelect={() => openCliDialog(provider, "update")}>
-              <IconRefresh className="size-4" />
-              <span>Update {CLI_NAMES[provider]}</span>
-            </DropdownMenuItem>
-          )
-        )}
+        {installedProviders.map((p) => (
+          <Fragment key={p}>
+            {cliStatus[p]?.loggedIn === false ? (
+              <DropdownMenuItem onSelect={() => openCliDialog(p, "login")}>
+                <IconLogin className="size-4" />
+                <span>Sign in to {ACCOUNT_NAMES[p]}</span>
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem onSelect={() => openCliDialog(p, "update")}>
+                <IconRefresh className="size-4" />
+                <span>Update {CLI_NAMES[p]}</span>
+              </DropdownMenuItem>
+            )}
+          </Fragment>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );

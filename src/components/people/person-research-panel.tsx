@@ -8,6 +8,7 @@ import { IconPlayerPlay, IconFileText } from "@tabler/icons-react";
 import { startPersonResearch } from "@/lib/tauri/commands";
 import { handleStreamEvent } from "@/lib/stream/handle-stream-event";
 import { toast } from "sonner";
+import { wasSkipped } from "@/lib/research/start-for-each";
 
 interface PersonResearchPanelProps {
   personId: number;
@@ -32,26 +33,30 @@ export function PersonResearchPanel({
       // Logs stream directly via Channel callback for real-time display
       const result = await startPersonResearch(personId, handleStreamEvent);
 
-      toast.success(`Started research for ${personName}`);
+      if (wasSkipped(result)) {
+        toast.info(`${personName} already has an email`);
+      } else {
+        toast.success(`Looking for ${personName}'s email`);
+      }
       return result;
     }).catch((error) => {
-      console.error("Failed to start research:", error);
-      toast.error("Failed to start research");
+      console.error("Failed to start the email search:", error);
+      toast.error("Couldn't start the email search");
     });
   };
 
   if (!personProfile) {
     const description = companyName
-      ? `Research data for ${personName} at ${companyName} hasn't been generated yet.`
-      : `Research data for ${personName} hasn't been generated yet.`;
+      ? `${companyName}'s website didn't give an email for ${personName}. A search for this person looks further.`
+      : `Search the web for ${personName}'s email address.`;
     return (
       <EmptyState
         icon={IconFileText}
-        title="No research available"
+        title="No email yet"
         description={description}
         action={{
-          label: "Start Research",
-          loadingLabel: "Researching...",
+          label: "Find Email",
+          loadingLabel: "Searching...",
           onClick: handleStartResearch,
           isLoading: isJobActive,
           icon: IconPlayerPlay,

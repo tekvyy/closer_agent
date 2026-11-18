@@ -82,7 +82,8 @@ pub(crate) fn init_schema(conn: &Connection) -> SqliteResult<()> {
             user_status TEXT DEFAULT 'new',
             conversation_topics TEXT,
             conversation_generated_at INTEGER,
-            created_at INTEGER NOT NULL
+            created_at INTEGER NOT NULL,
+            email_source TEXT
         );
 
         CREATE TABLE IF NOT EXISTS prompts (
@@ -192,10 +193,17 @@ pub(crate) fn init_schema(conn: &Connection) -> SqliteResult<()> {
         conn.query_row("SELECT model FROM settings WHERE id = 1", [], |row| {
             row.get(0)
         })?;
-    if !crate::model_config::is_supported_model(&configured_model) {
+    // Research always runs on the account's research model; the saved model only says
+    // which account (Claude or ChatGPT) to use
+    let research_model = if crate::model_config::is_supported_model(&configured_model) {
+        crate::model_config::research_model(crate::model_config::provider_for(&configured_model))
+    } else {
+        crate::model_config::default_model()
+    };
+    if configured_model != research_model {
         conn.execute(
             "UPDATE settings SET model = ?1 WHERE id = 1",
-            [crate::model_config::default_model()],
+            [research_model],
         )?;
     }
 
@@ -258,6 +266,11 @@ fn run_migrations(conn: &Connection) -> SqliteResult<()> {
         eprintln!("[db] Migrating people table to remove NOT NULL constraint on lead_id");
         conn.execute_batch(
             r#"
+            BEGIN;
+
+            -- Left behind if an earlier attempt stopped half way
+            DROP TABLE IF EXISTS people_new;
+
             -- Create new table with correct schema
             CREATE TABLE people_new (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -278,8 +291,16 @@ fn run_migrations(conn: &Connection) -> SqliteResult<()> {
                 created_at INTEGER NOT NULL
             );
 
-            -- Copy existing data
-            INSERT INTO people_new SELECT * FROM people;
+            -- Copy existing data, by name: the old table may have fewer or more columns
+            INSERT INTO people_new (id, lead_id, first_name, last_name, email, title,
+                management_level, linkedin_url, year_joined, person_profile, research_status,
+                researched_at, user_status, conversation_topics, conversation_generated_at,
+                created_at)
+            SELECT id, lead_id, first_name, last_name, email, title,
+                management_level, linkedin_url, year_joined, person_profile, research_status,
+                researched_at, user_status, conversation_topics, conversation_generated_at,
+                created_at
+            FROM people;
 
             -- Drop old table
             DROP TABLE people;
@@ -289,9 +310,17 @@ fn run_migrations(conn: &Connection) -> SqliteResult<()> {
 
             -- Recreate index
             CREATE INDEX IF NOT EXISTS idx_people_lead_id ON people(lead_id);
+
+            COMMIT;
             "#,
         )?;
         eprintln!("[db] Migration complete: people table updated");
+    }
+
+    // Databases from before emails recorded how they were found. After the rebuild above,
+    // which makes the table without this column.
+    if column_exists(conn, "people", "id") && !column_exists(conn, "people", "email_source") {
+        conn.execute("ALTER TABLE people ADD COLUMN email_source TEXT", [])?;
     }
 
     Ok(())
@@ -336,6 +365,45 @@ mod tests {
 
         update_lead_notes(&conn, lead_id, "").unwrap();
         assert_eq!(get_lead(&conn, lead_id).unwrap().unwrap().notes, None);
+    }
+
+    #[test]
+    fn oldest_people_table_is_rebuilt_and_gets_email_source() {
+        // Before v0.3.1: lead_id NOT NULL, and none of the later columns' order guaranteed
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE leads (id INTEGER PRIMARY KEY, company_name TEXT NOT NULL);
+             CREATE TABLE people (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, lead_id INTEGER NOT NULL,
+                first_name TEXT NOT NULL, last_name TEXT NOT NULL, email TEXT, title TEXT,
+                management_level TEXT, linkedin_url TEXT, year_joined INTEGER,
+                person_profile TEXT, research_status TEXT DEFAULT 'pending',
+                researched_at INTEGER, user_status TEXT DEFAULT 'new',
+                conversation_topics TEXT, conversation_generated_at INTEGER,
+                created_at INTEGER NOT NULL);
+             INSERT INTO leads VALUES (1, 'Acme');
+             INSERT INTO people (lead_id, first_name, last_name, email, created_at)
+             VALUES (1, 'Jane', 'Doe', 'jane@acme.org', 5);
+             -- what a failed earlier attempt would have left
+             CREATE TABLE people_new (id INTEGER);",
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+        // A second launch finds nothing left to do
+        run_migrations(&conn).unwrap();
+
+        let (email, source): (String, Option<String>) = conn
+            .query_row("SELECT email, email_source FROM people", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!((email.as_str(), source), ("jane@acme.org", None));
+        conn.execute(
+            "INSERT INTO people (first_name, last_name, created_at) VALUES ('No', 'Company', 1)",
+            [],
+        )
+        .expect("lead_id is optional after the rebuild");
     }
 
     #[test]

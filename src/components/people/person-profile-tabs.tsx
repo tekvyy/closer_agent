@@ -9,6 +9,7 @@ import { useIsJobActive } from "@/lib/hooks/use-stream-tabs";
 import { startPersonResearch, startConversationGeneration } from "@/lib/tauri/commands";
 import { handleStreamEvent } from "@/lib/stream/handle-stream-event";
 import { toast } from "sonner";
+import { wasSkipped } from "@/lib/research/start-for-each";
 
 interface PersonProfileTabsProps {
   personId: number;
@@ -33,12 +34,16 @@ export function PersonProfileTabs({
     try {
       // Start research - backend will emit events
       // Stream logs to Zustand via handleStreamEvent
-      await startPersonResearch(personId, handleStreamEvent);
+      const result = await startPersonResearch(personId, handleStreamEvent);
 
-      toast.success(`Started research for ${personName}`);
+      if (wasSkipped(result)) {
+        toast.info(`${personName} already has an email`);
+      } else {
+        toast.success(`Looking for ${personName}'s email`);
+      }
     } catch (error) {
-      console.error("Failed to start research:", error);
-      toast.error("Failed to start research");
+      console.error("Failed to start the email search:", error);
+      toast.error("Couldn't start the email search");
     }
   };
 
@@ -97,7 +102,7 @@ export function PersonProfileTabs({
             ) : (
               <IconRefresh className="size-4" />
             )}
-            {isResearchJobActive ? "Researching..." : "Re-run Research"}
+            {isResearchJobActive ? "Searching..." : "Find Email"}
           </Button>
         )}
         {showConversationButton && (

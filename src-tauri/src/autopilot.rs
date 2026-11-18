@@ -1,24 +1,14 @@
-//! Autopilot: when a research step finishes, start the next one, so nobody has to open
-//! each lead and click through company research, scoring, people and talking points.
+//! Autopilot: when Find Leads finishes, research each company it found, so nobody has to
+//! open every lead and click Research.
 //!
-//! Find leads → research each new company → score it and research its new people →
-//! talking points for each person. Turned off with the `auto_research` setting.
+//! That is the whole chain. One research session per company brings its people and their
+//! emails; scoring, a deeper search for one person's email and talking points only run when
+//! someone asks for them, because each is another AI session against the account's limit.
 
-use crate::commands::{
-    queue_company_research, queue_conversation, queue_person_research, queue_scoring,
-};
-use crate::db::{self, DbState};
+use crate::commands::queue_company_research;
 use crate::jobs::{JobMetadata, JobType, StreamEvent};
-use rusqlite::{params, Connection};
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::{AppHandle, Emitter, Manager};
-
-enum NextStep {
-    ResearchLead(i64),
-    Score(i64),
-    ResearchPerson(i64),
-    Conversation(i64),
-}
+use tauri::{AppHandle, Emitter};
 
 /// Streams a background job's output to the UI as `job-stream` events, since no page
 /// holds a channel for it
@@ -37,134 +27,52 @@ fn background_channel(app: &AppHandle) -> Channel<StreamEvent> {
 /// Queue the follow-up jobs for a job that finished successfully. `created_leads` are
 /// the leads a find-leads job inserted.
 pub fn job_succeeded(app: &AppHandle, metadata: &JobMetadata, created_leads: &[i64]) {
-    let steps = match next_steps(app, metadata, created_leads) {
-        Ok(steps) => steps,
-        Err(e) => {
-            eprintln!("[autopilot] Couldn't plan the next steps: {e}");
-            return;
-        }
-    };
-    if steps.is_empty() {
+    let leads = leads_to_research(metadata.job_type, created_leads);
+    if leads.is_empty() {
         return;
     }
-    eprintln!("[autopilot] Queueing {} follow-up jobs", steps.len());
+    eprintln!(
+        "[autopilot] Queueing research for {} new leads",
+        leads.len()
+    );
 
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        for step in steps {
+        for lead_id in leads {
             let on_event = background_channel(&app);
-            let result = match step {
-                NextStep::ResearchLead(id) => {
-                    queue_company_research(app.clone(), id, None, on_event, true).await
-                }
-                NextStep::Score(id) => queue_scoring(app.clone(), id, on_event, true).await,
-                NextStep::ResearchPerson(id) => {
-                    queue_person_research(app.clone(), id, None, on_event, true).await
-                }
-                NextStep::Conversation(id) => {
-                    queue_conversation(app.clone(), id, on_event, true).await
-                }
-            };
-            if let Err(e) = result {
-                eprintln!("[autopilot] Couldn't queue a follow-up job: {e}");
+            if let Err(e) = queue_company_research(app.clone(), lead_id, None, on_event, true).await
+            {
+                eprintln!("[autopilot] Couldn't queue research for lead {lead_id}: {e}");
             }
         }
     });
 }
 
-fn next_steps(
-    app: &AppHandle,
-    metadata: &JobMetadata,
-    created_leads: &[i64],
-) -> Result<Vec<NextStep>, String> {
-    let state = app.state::<DbState>();
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    if !db::get_settings(&conn)
-        .map_err(|e| e.to_string())?
-        .auto_research
-    {
-        return Ok(Vec::new());
+fn leads_to_research(job_type: JobType, created_leads: &[i64]) -> Vec<i64> {
+    match job_type {
+        JobType::LeadFinder => created_leads.to_vec(),
+        JobType::CompanyResearch
+        | JobType::PersonResearch
+        | JobType::Scoring
+        | JobType::Conversation => Vec::new(),
     }
-
-    let id = metadata.entity_id;
-    let steps = match metadata.job_type {
-        JobType::LeadFinder => created_leads
-            .iter()
-            .copied()
-            .map(NextStep::ResearchLead)
-            .collect(),
-        JobType::CompanyResearch => {
-            let mut steps = Vec::new();
-            if db::get_active_scoring_config(&conn)
-                .map_err(|e| e.to_string())?
-                .is_some()
-            {
-                steps.push(NextStep::Score(id));
-            }
-            // Only people this research added; ones already researched keep their profile
-            steps.extend(
-                unresearched_people(&conn, id)
-                    .map_err(|e| e.to_string())?
-                    .into_iter()
-                    .map(NextStep::ResearchPerson),
-            );
-            steps
-        }
-        JobType::PersonResearch => vec![NextStep::Conversation(id)],
-        JobType::Scoring | JobType::Conversation => Vec::new(),
-    };
-    Ok(steps)
-}
-
-fn unresearched_people(conn: &Connection, lead_id: i64) -> rusqlite::Result<Vec<i64>> {
-    let mut stmt = conn.prepare(
-        "SELECT id FROM people
-         WHERE lead_id = ?1 AND COALESCE(research_status, 'pending') = 'pending'
-         ORDER BY id",
-    )?;
-    let ids = stmt.query_map(params![lead_id], |row| row.get(0))?;
-    ids.collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::unresearched_people;
-    use rusqlite::Connection;
-
-    fn db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        crate::db::init_schema(&conn).unwrap();
-        conn
-    }
-
-    fn add_lead(conn: &Connection, name: &str, status: &str, created_at: i64) -> i64 {
-        conn.execute(
-            "INSERT INTO leads (company_name, research_status, user_status, created_at)
-             VALUES (?1, ?2, 'new', ?3)",
-            rusqlite::params![name, status, created_at],
-        )
-        .unwrap();
-        conn.last_insert_rowid()
-    }
+    use super::leads_to_research;
+    use crate::jobs::JobType;
 
     #[test]
-    fn company_follow_up_skips_people_already_researched() {
-        let conn = db();
-        let lead = add_lead(&conn, "Acme", "completed", 100);
-        let other = add_lead(&conn, "Other", "completed", 100);
-        let add_person = |lead_id: i64, status: &str| {
-            conn.execute(
-                "INSERT INTO people (first_name, last_name, lead_id, research_status, user_status, created_at)
-                 VALUES ('A', 'B', ?1, ?2, 'new', 100)",
-                rusqlite::params![lead_id, status],
-            )
-            .unwrap();
-            conn.last_insert_rowid()
-        };
-        let new_person = add_person(lead, "pending");
-        add_person(lead, "completed");
-        add_person(other, "pending");
-
-        assert_eq!(unresearched_people(&conn, lead).unwrap(), vec![new_person]);
+    fn only_find_leads_starts_more_work() {
+        assert_eq!(leads_to_research(JobType::LeadFinder, &[4, 9]), vec![4, 9]);
+        for job_type in [
+            JobType::CompanyResearch,
+            JobType::PersonResearch,
+            JobType::Scoring,
+            JobType::Conversation,
+        ] {
+            assert!(leads_to_research(job_type, &[4, 9]).is_empty());
+        }
     }
 }

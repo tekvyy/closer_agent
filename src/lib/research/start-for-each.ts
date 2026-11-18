@@ -2,6 +2,11 @@ import { toast } from "sonner";
 import { handleStreamEvent } from "@/lib/stream/handle-stream-event";
 import type { StreamEvent } from "@/lib/tauri/types";
 
+/** The backend answers "skipped" when there was nothing to do, e.g. the email is known */
+export function wasSkipped(result: unknown): boolean {
+  return (result as { status?: string } | null)?.status === "skipped";
+}
+
 export type StartJob = (id: number, onEvent: (event: StreamEvent) => void) => Promise<unknown>;
 
 /**
@@ -20,18 +25,20 @@ export async function startForEach(
   const results = await Promise.all(
     ids.map((id) =>
       start(id, handleStreamEvent).then(
-        () => true,
+        (result) => (wasSkipped(result) ? "skipped" : "started"),
         (error) => {
           console.error(`Failed to start ${what} for ${singular} ${id}:`, error);
-          return false;
+          return "failed";
         }
       )
     )
   );
 
-  const started = results.filter(Boolean).length;
-  const failed = results.length - started;
+  const tally = (outcome: string) => results.filter((result) => result === outcome).length;
   const count = (n: number) => `${n} ${n === 1 ? singular : plural}`;
-  if (started > 0) toast.success(`Started ${what} for ${count(started)}`);
-  if (failed > 0) toast.error(`Failed to start ${what} for ${count(failed)}`);
+  if (tally("started") > 0) toast.success(`Started ${what} for ${count(tally("started"))}`);
+  if (tally("skipped") > 0) {
+    toast.info(`${count(tally("skipped"))} already had what ${what} looks for`);
+  }
+  if (tally("failed") > 0) toast.error(`Failed to start ${what} for ${count(tally("failed"))}`);
 }

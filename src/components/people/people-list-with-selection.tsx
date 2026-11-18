@@ -35,6 +35,7 @@ type PersonWithCompany = {
   lastName: string;
   title: string | null;
   email: string | null;
+  emailSource: "published" | "pattern" | null;
   linkedinUrl: string | null;
   leadId: number | null;
   companyName: string | null;
@@ -67,7 +68,7 @@ export function PeopleListWithSelection({
       startForEach(
         selectedIds.filter((id) => personMap.has(id)),
         startPersonResearch,
-        "research",
+        "the email search",
         ["person", "people"]
       ),
     [personMap]
@@ -112,7 +113,7 @@ export function PeopleListWithSelection({
     () => [
       {
         id: "research",
-        label: "Run Research",
+        label: "Find Email",
         icon: IconSearch,
         group: "Research",
         onExecute: handleResearch,
@@ -172,7 +173,11 @@ function PersonRow({ person }: { person: PersonWithCompany }) {
         {person.title && <span className="text-muted-foreground ml-2">{person.title}</span>}
       </Link>
 
-      <EmailCell email={person.email} researchStatus={person.researchStatus} />
+      <EmailCell
+        email={person.email}
+        emailSource={person.emailSource}
+        researchStatus={person.researchStatus}
+      />
 
       {person.leadId && person.companyName ? (
         <Link
@@ -195,28 +200,46 @@ function PersonRow({ person }: { person: PersonWithCompany }) {
 }
 
 /**
- * The person's email, or why there isn't one: research ran and found nothing, research is
- * running, or nobody has researched them yet.
+ * The person's email and how sure it is, or why there isn't one: the search ran and found
+ * nothing, it is running, or company research found none and nobody has searched for this
+ * person yet.
  */
 function EmailCell({
   email,
+  emailSource,
   researchStatus,
 }: {
   email: string | null;
+  emailSource: "published" | "pattern" | null;
   researchStatus: string | null;
 }) {
   const cell = "w-60 shrink-0 flex items-center gap-1.5 text-xs";
   if (email) {
+    const isPattern = emailSource === "pattern";
     return (
-      <div title={email} className={`${cell} text-foreground select-text`}>
-        <IconMail className="size-3.5 shrink-0 text-green-500" />
+      <div
+        title={
+          isPattern
+            ? `${email}\nWorked out from how this company writes its addresses, not seen published. It may bounce.`
+            : email
+        }
+        className={`${cell} text-foreground select-text`}
+      >
+        <IconMail
+          className={`size-3.5 shrink-0 ${isPattern ? "text-amber-500" : "text-green-500"}`}
+        />
         <span className="truncate">{email}</span>
+        {isPattern && (
+          <span className="shrink-0 rounded bg-amber-500/15 px-1 text-[10px] text-amber-500 select-none">
+            likely
+          </span>
+        )}
       </div>
     );
   }
   if (researchStatus === "in_progress") {
     return (
-      <div title="Research is looking for their email" className={`${cell} text-muted-foreground`}>
+      <div title="Looking for their email" className={`${cell} text-muted-foreground`}>
         <IconLoader2 className="size-3.5 shrink-0 animate-spin" />
         <span className="truncate">Searching…</span>
       </div>
@@ -225,7 +248,7 @@ function EmailCell({
   if (researchStatus === "completed") {
     return (
       <div
-        title="Research couldn't find their email. Their profile lists what was searched."
+        title="A search for this person found no email. Their page lists what was searched."
         className={`${cell} text-amber-500 font-medium`}
       >
         <IconMailOff className="size-3.5 shrink-0" />
@@ -237,14 +260,14 @@ function EmailCell({
     <div
       title={
         researchStatus === "failed"
-          ? "Research failed. Run it again to look for their email."
-          : "Run research to look for their email"
+          ? "The search failed. Run Find Email again."
+          : "Their company's website didn't give an email. Find Email searches for this person."
       }
       className={`${cell} text-muted-foreground/60`}
     >
       <IconMail className="size-3.5 shrink-0" />
       <span className="truncate italic">
-        {researchStatus === "failed" ? "Research failed" : "Not researched yet"}
+        {researchStatus === "failed" ? "Search failed" : "No email yet"}
       </span>
     </div>
   );

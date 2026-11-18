@@ -9,10 +9,22 @@ interface ResearchAllButtonProps {
   start: StartJob;
   /** Singular and plural, e.g. ["lead", "leads"] */
   noun: [string, string];
+  /** The job, as in "Started {what} for 3 leads"; "research" unless given */
+  what?: string;
+  /** Button text; "Research 3 new leads" unless given */
+  label?: (count: number) => string;
+  title?: string;
 }
 
 /** Starts research for every entity not researched yet, in one click */
-export function ResearchAllButton({ ids, start, noun }: ResearchAllButtonProps) {
+export function ResearchAllButton({
+  ids,
+  start,
+  noun,
+  what = "research",
+  label,
+  title,
+}: ResearchAllButtonProps) {
   const [isStarting, setIsStarting] = useState(false);
 
   if (ids.length === 0) return null;
@@ -20,20 +32,22 @@ export function ResearchAllButton({ ids, start, noun }: ResearchAllButtonProps) 
   const handleClick = async () => {
     setIsStarting(true);
     try {
-      await startForEach(ids, start, "research", noun);
+      await startForEach(ids, start, what, noun);
     } finally {
       setIsStarting(false);
     }
   };
 
   return (
-    <Button variant="outline" size="sm" onClick={handleClick} disabled={isStarting}>
+    <Button variant="outline" size="sm" onClick={handleClick} disabled={isStarting} title={title}>
       {isStarting ? (
         <IconLoader2 className="size-3.5 animate-spin" />
       ) : (
         <IconPlayerPlay className="size-3.5" />
       )}
-      Research {ids.length} new {ids.length === 1 ? noun[0] : noun[1]}
+      {label
+        ? label(ids.length)
+        : `Research ${ids.length} new ${ids.length === 1 ? noun[0] : noun[1]}`}
     </Button>
   );
 }

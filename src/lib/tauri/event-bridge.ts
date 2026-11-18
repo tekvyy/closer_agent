@@ -140,15 +140,14 @@ export async function initializeEventBridge(): Promise<void> {
   });
   unlisteners.push(personDeletedUnlisten);
 
-  // Job created → set active tab, open panel, invalidate jobs query
+  // Job created → make it the tab the log shows, invalidate jobs query. The log itself
+  // only opens when asked for; the sidebar shows that research is running.
   const jobCreatedUnlisten = await listen<JobCreatedPayload>("job-created", (event) => {
     const { jobId, background } = event.payload;
 
-    // Autopilot jobs join the tab list without pulling the user away from what they watch
+    // Autopilot jobs join the tab list without replacing the job someone chose to watch
     if (!background) {
-      const store = useStreamPanelStore.getState();
-      store.setActiveTab(jobId);
-      store.setOpen(true);
+      useStreamPanelStore.getState().setActiveTab(jobId);
     }
 
     // Invalidate jobs queries so the new job appears in the tab list and counts

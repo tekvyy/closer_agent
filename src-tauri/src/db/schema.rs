@@ -61,6 +61,9 @@ pub struct Person {
     pub conversation_topics: Option<String>,
     pub conversation_generated_at: Option<i64>,
     pub created_at: i64,
+    /// How the email was found: "published" (seen on a page) or "pattern" (worked out
+    /// from the company's other addresses). None for emails typed in or found before this
+    pub email_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +85,7 @@ pub struct PersonWithCompany {
     pub conversation_topics: Option<String>,
     pub conversation_generated_at: Option<i64>,
     pub created_at: i64,
+    pub email_source: Option<String>,
     pub company_name: Option<String>,
     pub company_website: Option<String>,
     pub company_industry: Option<String>,
@@ -234,9 +238,8 @@ pub struct JobLog {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
+    /// The research model of the account in use; it says which account (Claude or
+    /// ChatGPT) jobs run on
     pub model: String,
-    pub use_chrome: bool,
-    /// Chain the next research step automatically when one finishes
-    pub auto_research: bool,
     pub updated_at: i64,
 }

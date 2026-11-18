@@ -10,6 +10,7 @@ import {
   IconLoader2,
 } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
+import { formatLongDate } from "@/lib/utils";
 
 interface NoteConfig {
   id: number;
@@ -189,7 +190,7 @@ interface ActivityItemProps {
 }
 
 export function ActivityItem({ icon, iconBgColor, label, timestamp }: ActivityItemProps) {
-  const formatted = formatActivityDate(timestamp);
+  const formatted = formatLongDate(timestamp);
   return (
     <div className="flex items-start gap-3 text-sm">
       <div className={`size-6 rounded-full ${iconBgColor} flex items-center justify-center mt-0.5`}>
@@ -201,14 +202,6 @@ export function ActivityItem({ icon, iconBgColor, label, timestamp }: ActivityIt
       </div>
     </div>
   );
-}
-
-function formatActivityDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 interface SidebarSectionProps {

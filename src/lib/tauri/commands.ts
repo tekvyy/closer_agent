@@ -268,10 +268,8 @@ export async function deleteJob(jobId: string): Promise<void> {
 // ============================================================================
 
 export interface Settings {
+  /** The research model of the account in use; it says which account jobs run on */
   model: string;
-  useChrome: boolean;
-  /** Start the next research step automatically when one finishes */
-  autoResearch: boolean;
   updatedAt: number;
 }
 
@@ -279,13 +277,8 @@ export async function getSettings(): Promise<Settings> {
   return invoke("get_settings");
 }
 
-export async function updateSettings(model: string, useChrome: boolean): Promise<void> {
-  return invoke("update_settings", { model, useChrome });
-}
-
-/** Turning autopilot off also cancels the jobs it queued that haven't started */
-export async function setAutoResearch(enabled: boolean): Promise<void> {
-  return invoke("set_auto_research", { enabled });
+export async function updateSettings(model: string): Promise<void> {
+  return invoke("update_settings", { model });
 }
 
 /** Cancels every job still waiting for a slot; resolves with how many were cancelled */

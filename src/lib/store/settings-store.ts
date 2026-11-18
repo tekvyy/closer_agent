@@ -4,7 +4,6 @@ import {
   checkCli,
   getSettings,
   updateSettings as updateSettingsCmd,
-  setAutoResearch as setAutoResearchCmd,
   type CliIssue,
   type CliProvider,
   type CliStatus,
@@ -52,6 +51,8 @@ export interface ModelOption {
 
 export const MODEL_OPTIONS = modelConfig.models as ModelOption[];
 export const DEFAULT_MODEL = modelConfig.defaultModel as ModelId;
+/** The one model each account researches with, so nobody has to pick */
+export const RESEARCH_MODELS = modelConfig.researchModels as Record<ModelProvider, ModelId>;
 
 export function isModelId(value: string): value is ModelId {
   return MODEL_OPTIONS.some((model) => model.value === value);
@@ -62,14 +63,11 @@ export function providerOf(model: ModelId): ModelProvider {
 }
 
 interface SettingsState {
+  /** The research model of the account in use (see RESEARCH_MODELS) */
   selectedModel: ModelId;
-  useChrome: boolean;
-  /** Autopilot: chain research, scoring, people and talking points */
-  autoResearch: boolean;
   isLoading: boolean;
   isInitialized: boolean;
   isUpdatingModel: boolean;
-  isUpdatingChrome: boolean;
   /** Install/sign-in state of each provider's CLI; absent until first checked */
   cliStatus: Partial<Record<ModelProvider, CliStatus>>;
   /** CLI problem shown in the CLI dialog (install, update, sign in); null when closed */
@@ -78,19 +76,15 @@ interface SettingsState {
   loadSettings: () => Promise<void>;
   /** Re-check both CLIs; switches away from a provider whose CLI is missing */
   refreshCliStatus: () => Promise<void>;
-  setSelectedModel: (model: ModelId) => Promise<void>;
-  setUseChrome: (useChrome: boolean) => Promise<void>;
-  setAutoResearch: (enabled: boolean) => Promise<void>;
+  /** Research with this account from now on */
+  setProvider: (provider: ModelProvider) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
   selectedModel: DEFAULT_MODEL,
-  useChrome: false,
-  autoResearch: true,
   isLoading: false,
   isInitialized: false,
   isUpdatingModel: false,
-  isUpdatingChrome: false,
   cliStatus: {},
   cliIssue: null,
 
@@ -104,8 +98,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       const settings = await getSettings();
       set({
         selectedModel: isModelId(settings.model) ? settings.model : DEFAULT_MODEL,
-        useChrome: settings.useChrome,
-        autoResearch: settings.autoResearch,
         isInitialized: true,
       });
     } catch (error) {
@@ -132,106 +124,38 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     ) as Partial<Record<ModelProvider, CliStatus>>;
     set({ cliStatus });
 
-    // Jobs would fail on a missing CLI, so move to a provider that is installed
-    const { selectedModel, isInitialized, setSelectedModel } = get();
+    // Jobs would fail on a missing CLI, so move to an account whose CLI is installed
+    const { selectedModel, isInitialized, setProvider } = get();
     const currentProvider = providerOf(selectedModel);
     if (!isInitialized || cliStatus[currentProvider]?.found !== false) return;
     const fallback = PROVIDERS.find((provider) => cliStatus[provider]?.found);
     if (!fallback) return;
-
-    const fallbackModel =
-      providerOf(DEFAULT_MODEL) === fallback
-        ? DEFAULT_MODEL
-        : MODEL_OPTIONS.find((option) => option.provider === fallback)!.value;
-    toast.info(`${CLI_NAMES[currentProvider]} CLI isn't installed`, {
-      description: `Switched to ${PROVIDER_LABELS[fallback]} models. Install ${CLI_NAMES[currentProvider]} from the model menu to use ${ACCOUNT_NAMES[currentProvider]} models.`,
-    });
-    await setSelectedModel(fallbackModel);
+    await setProvider(fallback);
   },
 
-  setSelectedModel: async (model: ModelId) => {
-    const { useChrome, selectedModel: previousModel } = get();
+  setProvider: async (provider: ModelProvider) => {
+    const model = RESEARCH_MODELS[provider];
+    const previousModel = get().selectedModel;
+    if (model === previousModel) return;
 
-    // Pessimistic update: set loading state first
     set({ isUpdatingModel: true });
-
     try {
-      // Wait for backend to confirm the update
-      await updateSettingsCmd(model, useChrome);
-
-      // Only update UI state after successful backend update
+      // Wait for the backend to confirm before showing the change
+      await updateSettingsCmd(model);
       set({ selectedModel: model });
-
-      // Show success feedback
-      const modelLabel = MODEL_OPTIONS.find((m) => m.value === model)?.label || model;
-      toast.success(`Model updated to ${modelLabel}`);
+      toast.success(`Research now uses your ${ACCOUNT_NAMES[provider]} account`);
     } catch (error) {
-      console.error("Failed to update model setting:", error);
-
-      // Revert to previous model on error
+      console.error("Failed to change the AI account:", error);
       set({ selectedModel: previousModel });
-
-      // Show error with retry option
-      toast.error("Failed to update model", {
-        description: "The model selection could not be saved.",
+      toast.error("Couldn't change the AI account", {
+        description: "The choice could not be saved.",
         action: {
           label: "Retry",
-          onClick: () => get().setSelectedModel(model),
+          onClick: () => get().setProvider(provider),
         },
       });
     } finally {
       set({ isUpdatingModel: false });
-    }
-  },
-
-  setUseChrome: async (useChrome: boolean) => {
-    const { selectedModel, useChrome: previousUseChrome } = get();
-
-    // Pessimistic update: set loading state first
-    set({ isUpdatingChrome: true });
-
-    try {
-      // Wait for backend to confirm the update
-      await updateSettingsCmd(selectedModel, useChrome);
-
-      // Only update UI state after successful backend update
-      set({ useChrome });
-
-      // Show success feedback
-      toast.success(`Browser integration ${useChrome ? "enabled" : "disabled"}`);
-    } catch (error) {
-      console.error("Failed to update useChrome setting:", error);
-
-      // Revert to previous value on error
-      set({ useChrome: previousUseChrome });
-
-      // Show error with retry option
-      toast.error("Failed to update browser integration", {
-        description: "The setting could not be saved.",
-        action: {
-          label: "Retry",
-          onClick: () => get().setUseChrome(useChrome),
-        },
-      });
-    } finally {
-      set({ isUpdatingChrome: false });
-    }
-  },
-
-  setAutoResearch: async (enabled: boolean) => {
-    const previous = get().autoResearch;
-    set({ autoResearch: enabled });
-    try {
-      await setAutoResearchCmd(enabled);
-      toast.success(enabled ? "Autopilot on" : "Autopilot off", {
-        description: enabled
-          ? "Finished research now starts scoring, people research and talking points."
-          : "Each research step now waits for you to start it.",
-      });
-    } catch (error) {
-      console.error("Failed to update autopilot setting:", error);
-      set({ autoResearch: previous });
-      toast.error("Couldn't change autopilot", { description: String(error) });
     }
   },
 }));

@@ -16,7 +16,15 @@ pub enum Provider {
 #[serde(rename_all = "camelCase")]
 struct ModelConfig {
     default_model: String,
+    research_models: ResearchModels,
     models: Vec<ModelOption>,
+}
+
+/// The one model each account researches with, so nobody has to pick
+#[derive(Debug, Deserialize)]
+struct ResearchModels {
+    claude: String,
+    codex: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,6 +46,14 @@ pub fn default_model() -> &'static str {
     &config().default_model
 }
 
+pub fn research_model(provider: Provider) -> &'static str {
+    let models = &config().research_models;
+    match provider {
+        Provider::Claude => &models.claude,
+        Provider::Codex => &models.codex,
+    }
+}
+
 pub fn is_supported_model(model: &str) -> bool {
     config().models.iter().any(|option| option.value == model)
 }
@@ -54,7 +70,9 @@ pub fn provider_for(model: &str) -> Provider {
 
 #[cfg(test)]
 mod tests {
-    use super::{config, default_model, is_supported_model, provider_for, Provider};
+    use super::{
+        config, default_model, is_supported_model, provider_for, research_model, Provider,
+    };
     use std::collections::HashSet;
 
     #[test]
@@ -64,6 +82,19 @@ mod tests {
 
         assert_eq!(unique.len(), config.models.len());
         assert!(is_supported_model(default_model()));
+    }
+
+    #[test]
+    fn each_account_researches_with_one_of_its_own_models() {
+        for provider in [Provider::Claude, Provider::Codex] {
+            let model = research_model(provider);
+            assert!(is_supported_model(model));
+            assert_eq!(provider_for(model), provider);
+        }
+        assert_eq!(
+            research_model(provider_for(default_model())),
+            default_model()
+        );
     }
 
     #[test]

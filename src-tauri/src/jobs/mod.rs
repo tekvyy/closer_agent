@@ -1,6 +1,7 @@
 pub mod codex_stream;
 pub mod completion_handler;
 pub mod enrichment;
+pub mod found_people;
 pub mod queue;
 pub mod recovery;
 pub mod result_parser;

@@ -55,8 +55,6 @@ pub struct StreamEvent {
 struct ActiveJob {
     cancel_tx: mpsc::Sender<Cancel>,
     status: String,
-    /// Started by autopilot
-    background: bool,
 }
 
 /// Why a job is being cancelled
@@ -294,7 +292,6 @@ impl JobQueue {
                 ActiveJob {
                     cancel_tx,
                     status: "queued".to_string(),
-                    background: metadata.background,
                 },
             );
         }
@@ -314,8 +311,8 @@ impl JobQueue {
             let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
             let settings = crate::db::get_settings(&conn).map_err(|e| e.to_string())?;
             eprintln!(
-                "[job_queue] job_id={} Using settings: model='{}', use_chrome={}",
-                job_id, settings.model, settings.use_chrome
+                "[job_queue] job_id={} Using settings: model='{}'",
+                job_id, settings.model
             );
             let new_job = NewJob {
                 id: job_id.clone(),
@@ -450,7 +447,7 @@ impl JobQueue {
             let cli_path = cli_tools::find_cli(provider)
                 .unwrap_or_else(|| cli_tools::cli_name(provider).to_string());
             let args = match provider {
-                Provider::Claude => claude_args(&settings.model, settings.use_chrome),
+                Provider::Claude => claude_args(&settings.model),
                 Provider::Codex => codex_args(&settings.model, &metadata),
             };
 
@@ -775,11 +772,11 @@ impl JobQueue {
 
     /// Cancel every job still waiting for a slot; running jobs finish. Returns how many
     /// were cancelled.
-    pub async fn cancel_queued(&self, background_only: bool) -> usize {
+    pub async fn cancel_queued(&self) -> usize {
         let mut jobs = self.active_jobs.lock().await;
         let queued: Vec<String> = jobs
             .iter()
-            .filter(|(_, job)| job.status == "queued" && (job.background || !background_only))
+            .filter(|(_, job)| job.status == "queued")
             .map(|(id, _)| id.clone())
             .collect();
         for id in &queued {
@@ -872,24 +869,18 @@ fn db_reset_entity_status(
 }
 
 /// Arguments for the Claude Code CLI; `-p` reads the prompt from stdin.
-fn claude_args(model: &str, use_chrome: bool) -> Vec<String> {
-    let mut args: Vec<String> = [
+fn claude_args(model: &str) -> Vec<String> {
+    [
         "-p",
         "--output-format",
         "stream-json",
         "--verbose",
         "--dangerously-skip-permissions",
+        "--model",
+        model,
     ]
     .map(String::from)
-    .to_vec();
-
-    if use_chrome {
-        args.push("--chrome".to_string());
-    }
-
-    args.push("--model".to_string());
-    args.push(model.to_string());
-    args
+    .to_vec()
 }
 
 /// Arguments for the Codex CLI (signed in with a ChatGPT account). Codex runs in its
@@ -916,7 +907,7 @@ fn codex_args(model: &str, metadata: &JobMetadata) -> Vec<String> {
         "-c",
         "web_search=\"live\"",
         "-c",
-        "model_reasoning_effort=\"medium\"",
+        "model_reasoning_effort=\"low\"",
         "--model",
         model,
     ]

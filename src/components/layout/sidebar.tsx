@@ -6,17 +6,12 @@ import {
   IconTypography,
   IconTargetArrow,
 } from "@tabler/icons-react";
-import { ModelSelector } from "./model-selector";
-import { ChromeToggle } from "./chrome-toggle";
-import { AutopilotToggle } from "./autopilot-toggle";
+import { AccountSelector } from "./model-selector";
+import { ActivityStatus } from "./activity-status";
 import { CrmConnectionRow } from "@/components/crm/crm-connection";
 import { AppUpdateRow } from "@/components/layout/app-updater";
-import { OnboardingChecklist } from "@/components/onboarding/onboarding-checklist";
-import { useOnboardingStatus } from "@/lib/query";
 
 export function Sidebar() {
-  const { data: onboardingStatus } = useOnboardingStatus();
-
   return (
     <aside className="w-52 bg-sidebar flex flex-col text-[13px] shrink-0 border-r border-white/5 pt-8">
       {/* Draggable region for traffic lights area */}
@@ -77,18 +72,13 @@ export function Sidebar() {
         </div>
       </nav>
 
+      <ActivityStatus />
+
       <div className="p-2 border-t border-white/5 space-y-1">
-        <div className="px-2 py-1 text-muted-foreground text-[11px] uppercase tracking-wider font-medium">
-          Settings
-        </div>
-        <ModelSelector />
-        <ChromeToggle />
-        <AutopilotToggle />
+        <AccountSelector />
         <CrmConnectionRow />
         <AppUpdateRow />
       </div>
-
-      {onboardingStatus && <OnboardingChecklist status={onboardingStatus} />}
     </aside>
   );
 }

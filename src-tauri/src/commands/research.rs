@@ -80,22 +80,11 @@ pub async fn queue_company_research(
     // Emit event so frontend updates immediately
     emit_lead_updated(&app, lead_id);
 
-    // Get prompts (with fallback to defaults)
-    let (company_prompt_content, company_overview) = {
+    // What we sell decides who is worth contacting
+    let company_overview = {
         let conn = state.conn.lock().map_err(|e| e.to_string())?;
-        let cp = db::get_prompt_by_type(&conn, "company").map_err(|e| e.to_string())?;
-        let co = db::get_prompt_by_type(&conn, "company_overview").map_err(|e| e.to_string())?;
-
-        // Use DB prompt or fall back to default
-        let content = cp
-            .map(|p| p.content)
-            .or_else(|| get_default_prompt("company").map(String::from));
-        (content, co)
+        db::get_prompt_by_type(&conn, "company_overview").map_err(|e| e.to_string())?
     };
-
-    let prompt_content = custom_prompt
-        .or(company_prompt_content)
-        .ok_or_else(|| "No company prompt configured".to_string())?;
 
     // Set up output directory
     let data_dir = app
@@ -120,7 +109,7 @@ pub async fn queue_company_research(
 
     // Build prompt with file paths
     let full_prompt = build_research_prompt(
-        &prompt_content,
+        custom_prompt.as_deref(),
         &lead,
         &profile_path,
         &people_path,
@@ -238,6 +227,32 @@ pub async fn queue_person_research(
         (p, l)
     };
 
+    // Person research only looks for an email, so there's nothing to do when we have one
+    if custom_prompt.is_none() && has_email(&person) {
+        let conn = state.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE people SET research_status = 'completed',
+                    researched_at = COALESCE(researched_at, ?1),
+                    person_profile = COALESCE(NULLIF(TRIM(person_profile), ''), ?3)
+             WHERE id = ?2",
+            rusqlite::params![
+                chrono::Utc::now().timestamp(),
+                person_id,
+                format!(
+                    "## Email\n\n{}\n\nAlready on file, so no search was needed.\n",
+                    person.email.as_deref().unwrap_or_default().trim()
+                )
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        drop(conn);
+        emit_person_updated(&app, person_id, person.lead_id);
+        return Ok(ResearchResult {
+            job_id: String::new(),
+            status: "skipped".to_string(),
+        });
+    }
+
     // Update status to in_progress
     {
         let conn = state.conn.lock().map_err(|e| e.to_string())?;
@@ -251,22 +266,10 @@ pub async fn queue_person_research(
     // Emit event so frontend updates immediately
     emit_person_updated(&app, person_id, person.lead_id);
 
-    // Get prompts (with fallback to defaults)
-    let (person_prompt_content, company_overview) = {
+    let company_overview = {
         let conn = state.conn.lock().map_err(|e| e.to_string())?;
-        let pp = db::get_prompt_by_type(&conn, "person").map_err(|e| e.to_string())?;
-        let co = db::get_prompt_by_type(&conn, "company_overview").map_err(|e| e.to_string())?;
-
-        // Use DB prompt or fall back to default
-        let content = pp
-            .map(|p| p.content)
-            .or_else(|| get_default_prompt("person").map(String::from));
-        (content, co)
+        db::get_prompt_by_type(&conn, "company_overview").map_err(|e| e.to_string())?
     };
-
-    let prompt_content = custom_prompt
-        .or(person_prompt_content)
-        .ok_or_else(|| "No person prompt configured".to_string())?;
 
     // Set up output directory
     let data_dir = app
@@ -289,7 +292,7 @@ pub async fn queue_person_research(
 
     // Build prompt with file path
     let full_prompt = build_person_research_prompt(
-        &prompt_content,
+        custom_prompt.as_deref(),
         &person,
         lead.as_ref(),
         &profile_path,
@@ -303,7 +306,7 @@ pub async fn queue_person_research(
     let _ = on_event.send(StreamEvent {
         job_id: "pending".to_string(),
         event_type: "info".to_string(),
-        content: format!("Starting research for {}...", full_name),
+        content: format!("Looking for {}'s email...", full_name),
         timestamp: chrono::Utc::now().timestamp_millis(),
     });
 
@@ -428,26 +431,56 @@ pub async fn get_active_jobs(queue: State<'_, JobQueue>) -> Result<Vec<String>, 
 // Prompt Builders
 // ============================================================================
 
-const PEOPLE_JSON_SCHEMA: &str = r#"
-For the people JSON, find the 3-6 people at this company who would decide on or champion
-buying what we sell (see the Company Overview, if given): typically the founder or CEO for
-small companies, and the relevant department heads and VPs for larger ones. Only include
-people you found evidence for (the company website, LinkedIn, press, conference talks) who
-still work there. Include their LinkedIn URL whenever you find it. Include an email when you
-see it published for that person (a team or contact page, a press release, their own site, a
-speaker page); never make one up here, because each person's own research looks for it properly.
-Write an empty array if you can't find anyone reliable.
+/// The whole of company research: who to contact and their emails, in one session. Each
+/// company used to cost a long profile plus two more sessions per person; the company's
+/// email pattern is the same for everyone there, so it is found once, here.
+const CONTACTS_TASK: &str = r#"# Task: find who to contact at this organisation, and their email addresses
 
-The people JSON should be an array of objects with these fields:
+The result we need is a short list of real people at this organisation with an email address
+for each. Keep the work small: read the organisation's own website first, search only for what
+the website doesn't give you, and stop as soon as the output files can be written. Do not write
+a long report."#;
+
+const CONTACTS_STEPS: &str = r#"
+## Step 1: people
+
+Find the 3-6 people who would decide on or champion buying what we offer (see About us, if
+given): the founder, owner, CEO or executive director for a small organisation, and the
+relevant department heads for a larger one. Use the website's team, staff, leadership, about
+and board pages first. Only include people you found evidence for who still work there.
+
+## Step 2: emails
+
+1. While on the website, note every email address published at the organisation's domain
+   (team, staff, contact, press and footer pages, and linked PDFs).
+2. Run one web search for the domain with the "@" sign (for example "@company.org") to see
+   more published addresses.
+3. From the addresses of real named people, work out the organisation's email pattern
+   (for example jane.doe@, jdoe@ or jane@).
+4. For each person from step 1: use their published address if you saw one ("published").
+   Otherwise, if you found the pattern from at least one real published personal address at
+   that domain, apply it to their name ("pattern"). Otherwise run at most one search for that
+   person's name with the domain, and if nothing turns up, leave the email out.
+5. A shared mailbox (info@, hello@, contact@, membership@ and the like) is not a person's
+   address: never give it as someone's email. The one exception is an organisation of one or
+   two people, where the contact address on their own website counts as the owner's
+   ("published").
+6. Never invent an address or use a pattern you saw no evidence for. No email is better than
+   a wrong one."#;
+
+const PEOPLE_JSON_SCHEMA: &str = r#"
+An array of objects (an empty array if you found nobody reliable):
 - firstName (string)
 - lastName (string)
-- email (string, optional)
 - title (string)
-- linkedinUrl (string, optional)
-- managementLevel (string, optional) - one of: C-Level, VP, Director, Manager, IC
-- yearJoined (number, optional) - the year they joined the company"#;
+- email (string, optional)
+- emailSource (string, required with email): "published" or "pattern"
+- emailEvidence (string, required with email): for "published", the page where you saw it;
+  for "pattern", the real address or addresses that showed the pattern
+- linkedinUrl (string, optional, only if you came across it)
+- managementLevel (string, optional): one of C-Level, VP, Director, Manager, IC"#;
 
-const LEAD_ENRICHMENT_SCHEMA: &str = r#"This file should contain verified company data in JSON format. Only include fields where you have found reliable data:
+const LEAD_ENRICHMENT_SCHEMA: &str = r#"Only the fields you found reliable data for:
 ```json
 {
   "website": "https://company.com",
@@ -455,63 +488,69 @@ const LEAD_ENRICHMENT_SCHEMA: &str = r#"This file should contain verified compan
   "subIndustry": "Enterprise Software",
   "employees": 500,
   "employeeRange": "201-500",
-  "revenue": 50000000,
-  "revenueRange": "$10M-$50M",
   "companyLinkedinUrl": "https://linkedin.com/company/...",
   "city": "San Francisco",
   "state": "California",
-  "country": "United States"
+  "country": "United States",
+  "emailPattern": "first.last",
+  "emailExamples": ["jane.doe@company.com", "sam.lee@company.com"]
 }
 ```
+emailPattern is how the organisation builds addresses from names, one of: first.last, first_last,
+firstlast, flast, f.last, first, firstl, last. Give it only with emailExamples: the real published
+addresses of named people (anyone at the organisation, not only the people above) that show it.
+Leave both out if you saw no personal address or the addresses don't share one pattern."#;
 
-IMPORTANT: Only include fields with verified data. Omit fields if uncertain."#;
+const COMPANY_SUMMARY: &str = "At most 120 words: what the organisation does, who it serves, its size and location, the \
+email pattern you found (or that no personal address was published), and its general contact address.";
 
-const PERSON_ENRICHMENT_SCHEMA: &str = r#"This file should contain verified person data in JSON format. Only include fields where you have found reliable data:
+/// Person research: one person's email, for people company research found no address for
+const FIND_EMAIL_TASK: &str = r#"# Task: find this person's email address
+
+The only result we need is this person's work email address. Keep the work small: use at most
+eight searches or page visits, and stop as soon as you have the address. Do not write a profile.
+
+1. Look for it published. Search for their name with the company's domain and the "@" sign
+   (for example "Jane Doe" "@company.com"). Check the company website's team, staff, contact
+   and press pages, then their own website, speaker or author pages, and PDFs such as reports.
+2. If their own address isn't published, work out the company's email pattern from other real
+   people's addresses published at the same domain (for example jane.doe@, jdoe@ or jane@) and
+   apply it to this person. Only do this when you found at least one real published personal
+   address at that domain showing the pattern. For a business of one or two people, the contact
+   address on their own website counts (info@ or hello@ included).
+3. Never invent an address or use a pattern you saw no evidence for. "Not found" is better than
+   a wrong address."#;
+
+const PERSON_ENRICHMENT_SCHEMA: &str = r#"Only when you found the address:
 ```json
 {
   "email": "name@company.com",
-  "title": "Senior Vice President of Sales",
-  "managementLevel": "VP",
-  "linkedinUrl": "https://linkedin.com/in/...",
-  "yearJoined": 2020
+  "emailSource": "published"
 }
 ```
+emailSource is "published" (you saw this exact address on a page) or "pattern" (worked out from
+the company's other addresses). You may also add "title" and "linkedinUrl" if you came across
+them and they were missing above. Write {} if you found no address."#;
 
-Valid managementLevel values: C-Level, VP, Director, Manager, IC
-IMPORTANT: Only include fields with verified data. Omit fields if uncertain. The one exception is
-"email": include it when it was published or worked out from the company's confirmed pattern, as
-described under "Finding their email"."#;
+const PERSON_EMAIL_NOTE: &str = "Start with an \"## Email\" heading, then the address (or \"Not found\"), then one line on how \
+you know it: \"Published\" with the page where you saw it, or \"From the company's pattern\" with the \
+example addresses. If not found, list what you searched. Nothing else.";
 
-/// Added to every person research, whatever the prompt says, because an email is what turns a
-/// researched person into someone you can contact.
-const EMAIL_FINDING: &str = r###"
-# Finding their email (do this first)
+fn has_email(person: &db::Person) -> bool {
+    person
+        .email
+        .as_deref()
+        .is_some_and(|email| !email.trim().is_empty())
+}
 
-The most important result is this person's email address. Work on it before the rest of the
-profile, and keep searching until you have tried every step below.
-
-1. Look for it published. Search the web for their name together with the company's domain and
-   the "@" sign (for example "Jane Doe" "@company.com", and "jane@company.com"). Check the
-   company website's team, about, contact, press and legal pages; press releases and media kits;
-   their personal website, blog or newsletter; podcast, webinar and conference speaker pages;
-   books, course or event listings; PDFs such as reports, slide decks and filings; GitHub and
-   other public profiles; and directory, association or chamber of commerce listings.
-2. If their own address isn't published, work out the company's email pattern from other real
-   addresses published at the same domain (for example jane.doe@, jdoe@ or jane@) and apply it to
-   this person. Only do this when you found at least one real published address at that domain
-   showing the pattern. For a business of one or two people, the contact address on their own
-   website counts (info@ or hello@ included).
-3. Never invent an address or use a pattern you didn't see evidence for. "Not found" is better
-   than a wrong address.
-
-Start the person profile with an "## Email" section that gives the address (or "Not found"),
-then how you know it: "Published" with the page where you saw it, or "From the company's
-pattern" with the example addresses you based it on. If not found, list what you searched.
-Put the address in the enrichment file's "email" field whenever you found one.
-"###;
+fn push_about_us(prompt: &mut String, company_overview: Option<&str>) {
+    if let Some(overview) = company_overview.filter(|text| !text.trim().is_empty()) {
+        prompt.push_str(&format!("# About us\n\n{}\n\n---\n\n", overview.trim()));
+    }
+}
 
 fn build_research_prompt(
-    prompt: &str,
+    custom_task: Option<&str>,
     lead: &db::Lead,
     profile_path: &std::path::Path,
     people_path: &std::path::Path,
@@ -519,13 +558,9 @@ fn build_research_prompt(
     company_overview: Option<&str>,
 ) -> String {
     let mut full_prompt = String::new();
+    push_about_us(&mut full_prompt, company_overview);
 
-    // Add company overview context if available
-    if let Some(overview) = company_overview {
-        full_prompt.push_str(&format!("# Company Overview\n\n{}\n\n---\n\n", overview));
-    }
-
-    full_prompt.push_str(prompt);
+    full_prompt.push_str(custom_task.unwrap_or(CONTACTS_TASK));
     full_prompt.push_str(&format!(
         "\n\n# Company Information\n\nCompany Name: {}\n",
         lead.company_name
@@ -546,28 +581,26 @@ fn build_research_prompt(
     if let Some(country) = &lead.country {
         full_prompt.push_str(&format!("Country: {}\n", country));
     }
-    if let Some(employees) = &lead.employee_range {
-        full_prompt.push_str(&format!("Employees: {}\n", employees));
-    }
+
+    full_prompt.push_str(CONTACTS_STEPS);
 
     full_prompt.push_str(&format!(
-        "\n# Output Files\n\nWrite the company profile to: {}\nWrite the people JSON to: {}\n{}\n",
-        profile_path.display(),
+        "\n\n# Output Files\n\nWrite the people JSON to: {}\n{}\n\n\
+         Write structured company data as JSON to: {}\n{}\n\n\
+         Write the company summary to: {}\n{}\n",
         people_path.display(),
-        PEOPLE_JSON_SCHEMA
-    ));
-
-    full_prompt.push_str(&format!(
-        "\n# Enrichment Data\n\nAdditionally, write structured enrichment data to: {}\n\n{}\n",
+        PEOPLE_JSON_SCHEMA,
         enrichment_path.display(),
-        LEAD_ENRICHMENT_SCHEMA
+        LEAD_ENRICHMENT_SCHEMA,
+        profile_path.display(),
+        COMPANY_SUMMARY,
     ));
 
     full_prompt
 }
 
 fn build_person_research_prompt(
-    prompt: &str,
+    custom_task: Option<&str>,
     person: &db::Person,
     lead: Option<&db::Lead>,
     profile_path: &std::path::Path,
@@ -575,13 +608,9 @@ fn build_person_research_prompt(
     company_overview: Option<&str>,
 ) -> String {
     let mut full_prompt = String::new();
+    push_about_us(&mut full_prompt, company_overview);
 
-    // Add company overview context if available
-    if let Some(overview) = company_overview {
-        full_prompt.push_str(&format!("# Company Overview\n\n{}\n\n---\n\n", overview));
-    }
-
-    full_prompt.push_str(prompt);
+    full_prompt.push_str(custom_task.unwrap_or(FIND_EMAIL_TASK));
     full_prompt.push_str(&format!(
         "\n\n# Person Information\n\nName: {} {}\n",
         person.first_name, person.last_name
@@ -590,43 +619,30 @@ fn build_person_research_prompt(
     if let Some(title) = &person.title {
         full_prompt.push_str(&format!("Title: {}\n", title));
     }
-    if let Some(email) = &person.email {
-        full_prompt.push_str(&format!("Email: {}\n", email));
+    if has_email(person) {
+        full_prompt.push_str(&format!(
+            "Email on file: {}\n",
+            person.email.as_deref().unwrap_or_default().trim()
+        ));
     }
     if let Some(linkedin) = &person.linkedin_url {
         full_prompt.push_str(&format!("LinkedIn: {}\n", linkedin));
     }
 
-    // Add company information if available
     if let Some(l) = lead {
-        full_prompt.push_str(&format!(
-            "\n# Company Information\n\nCompany: {}\n",
-            l.company_name
-        ));
+        full_prompt.push_str(&format!("Company: {}\n", l.company_name));
         if let Some(website) = &l.website {
-            full_prompt.push_str(&format!("Website: {}\n", website));
+            full_prompt.push_str(&format!("Company website: {}\n", website));
         }
     }
 
-    if person
-        .email
-        .as_deref()
-        .is_none_or(|email| email.trim().is_empty())
-    {
-        full_prompt.push_str(EMAIL_FINDING);
-    } else {
-        full_prompt.push_str(
-            "\n# Email\n\nTheir email is already known (above), so there's no need to search for it. \
-             Start the person profile with an \"## Email\" section that gives it, and mention it if \
-             you see a sign it's out of date.\n",
-        );
-    }
-
     full_prompt.push_str(&format!(
-        "\n# Output Files\n\nWrite the person profile to: {}\n\nAdditionally, write structured enrichment data to: {}\n\n{}\n",
+        "\n# Output Files\n\nWrite a short note to: {}\n{}\n\n\
+         Write structured data as JSON to: {}\n{}\n",
         profile_path.display(),
+        PERSON_EMAIL_NOTE,
         enrichment_path.display(),
-        PERSON_ENRICHMENT_SCHEMA
+        PERSON_ENRICHMENT_SCHEMA,
     ));
 
     full_prompt
@@ -750,10 +766,14 @@ fn build_find_leads_prompt(
 {icp_description}
 
 ## Instructions
-1. Search the web to find 10-20 real companies that match the ICP description above.
-2. For each company, gather: company name, website, city, state, country, and industry.
-3. Only include real companies that you can verify exist.
-4. Write the results as a JSON array to: {output_path}
+1. Search the web to find 10-20 real companies or organisations that match the ICP description above.
+2. For each one, gather: company name, website, city, state, country, and industry.
+3. Only include real ones that you can verify exist and that have their own website, because
+   the next step reads that website to find people and their email addresses.
+4. Stay inside the area the description names. If it names no country or area, keep to one
+   country: the one "About Our Company" points to, otherwise the United States.
+5. Keep the work small: a handful of searches is enough. Don't research each company in depth.
+6. Write the results as a JSON array to: {output_path}
 
 ## Output Format
 Write ONLY a valid JSON array to the output file, with no additional text. Each element should have this structure:
@@ -1481,12 +1501,13 @@ mod tests {
             conversation_topics: None,
             conversation_generated_at: None,
             created_at: 0,
+            email_source: None,
         }
     }
 
     fn prompt_for(email: Option<&str>) -> String {
         build_person_research_prompt(
-            "Research them.",
+            None,
             &person(email),
             None,
             Path::new("p.md"),
@@ -1495,22 +1516,79 @@ mod tests {
         )
     }
 
-    #[test]
-    fn person_research_searches_for_a_missing_email_first() {
-        for missing in [None, Some(""), Some("  ")] {
-            let prompt = prompt_for(missing);
-            assert!(prompt.contains("# Finding their email (do this first)"));
-            assert!(
-                prompt.find("Finding their email").unwrap()
-                    < prompt.find("# Output Files").unwrap()
-            );
+    fn lead() -> db::Lead {
+        db::Lead {
+            id: 1,
+            company_name: "Acme Relief".into(),
+            website: Some("https://acmerelief.org".into()),
+            industry: None,
+            sub_industry: None,
+            employees: None,
+            employee_range: None,
+            revenue: None,
+            revenue_range: None,
+            company_linkedin_url: None,
+            city: None,
+            state: None,
+            country: Some("United States".into()),
+            research_status: "pending".into(),
+            researched_at: None,
+            user_status: "new".into(),
+            created_at: 0,
+            company_profile: None,
+            notes: None,
         }
     }
 
     #[test]
-    fn person_research_skips_the_search_when_the_email_is_known() {
-        let prompt = prompt_for(Some("jane@example.com"));
-        assert!(!prompt.contains("Finding their email (do this first)"));
-        assert!(prompt.contains("Their email is already known"));
+    fn person_research_only_looks_for_the_email() {
+        for missing in [None, Some(""), Some("  ")] {
+            let prompt = prompt_for(missing);
+            assert!(prompt.contains("# Task: find this person's email address"));
+            assert!(prompt.contains("Do not write a profile"));
+            assert!(prompt.contains("\"emailSource\""));
+            assert!(!prompt.contains("Email on file"));
+        }
+    }
+
+    #[test]
+    fn has_email_ignores_blank_addresses() {
+        assert!(has_email(&person(Some("jane@example.com"))));
+        assert!(!has_email(&person(Some("  "))));
+        assert!(!has_email(&person(None)));
+    }
+
+    #[test]
+    fn company_research_asks_for_people_and_emails_not_a_report() {
+        let prompt = build_research_prompt(
+            None,
+            &lead(),
+            Path::new("profile.md"),
+            Path::new("people.json"),
+            Path::new("enrichment.json"),
+            Some("We coach nonprofit leaders."),
+        );
+        assert!(prompt.starts_with("# About us\n\nWe coach nonprofit leaders."));
+        assert!(prompt.contains("Website: https://acmerelief.org"));
+        assert!(prompt.contains("emailSource"));
+        assert!(prompt.contains("Write the people JSON to: people.json"));
+        assert!(prompt.contains("At most 120 words"));
+        // The old report sections cost most of the tokens and weren't used
+        for dropped in [
+            "Technology Stack",
+            "Company Culture",
+            "competitors",
+            "revenue",
+        ] {
+            assert!(!prompt.contains(dropped), "{dropped} is back in the prompt");
+        }
+        assert!(prompt.find("# Company Information").unwrap() < prompt.find("## Step 1").unwrap());
+    }
+
+    #[test]
+    fn find_leads_keeps_to_one_country_and_to_companies_with_a_website() {
+        let prompt = build_find_leads_prompt("nonprofits", Path::new("leads.json"), None, &[]);
+        assert!(prompt.contains("have their own website"));
+        assert!(prompt.contains("otherwise the United States"));
     }
 }

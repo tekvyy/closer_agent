@@ -1,37 +1,24 @@
 "use client";
 
-import { useStreamTabs } from "@/lib/hooks/use-stream-tabs";
+import { useStreamPanelStore } from "@/lib/store/stream-panel-store";
 import { StreamPanel } from "./stream-panel";
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 
+/**
+ * The page, with the activity log under it only while someone has opened the log from the
+ * sidebar. Research running in the background shows in the sidebar instead, so the page
+ * keeps its full height.
+ */
 export function StreamPanelWrapper({ children }: { children: React.ReactNode }) {
-  const { tabs } = useStreamTabs();
-  const hasTabs = tabs.length > 0;
+  const isOpen = useStreamPanelStore((s) => s.isOpen);
 
-  // If no tabs, just render children without resizable panels
-  if (!hasTabs) {
-    return (
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <main className="flex-1 flex flex-col overflow-hidden">{children}</main>
-      </div>
-    );
-  }
-
-  // Always render same structure to prevent remounting children
   return (
-    <ResizablePanelGroup orientation="vertical" className="flex-1">
-      <ResizablePanel defaultSize={65}>
-        <main className="h-full flex flex-col overflow-hidden">{children}</main>
-      </ResizablePanel>
-
-      <ResizableHandle
-        className="h-1 bg-transparent hover:bg-white/20 transition-colors cursor-row-resize"
-        disabled={false}
-      />
-
-      <ResizablePanel defaultSize={35} minSize={15}>
-        <StreamPanel />
-      </ResizablePanel>
-    </ResizablePanelGroup>
+    <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+      <main className="flex-1 min-h-0 flex flex-col overflow-hidden">{children}</main>
+      {isOpen && (
+        <div className="h-[38%] min-h-48 shrink-0">
+          <StreamPanel />
+        </div>
+      )}
+    </div>
   );
 }

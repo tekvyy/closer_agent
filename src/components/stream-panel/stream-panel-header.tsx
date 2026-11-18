@@ -6,12 +6,11 @@ import { cancelQueuedJobs } from "@/lib/tauri/commands";
 import { toast } from "sonner";
 import { StreamPanelTabs } from "./stream-panel-tabs";
 import { useStreamSubscription } from "./use-stream-subscription";
-import { IconChevronDown, IconChevronUp, IconPlayerStop } from "@tabler/icons-react";
+import { IconPlayerStop, IconX } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 
 export function StreamPanelHeader() {
-  const toggle = useStreamPanelStore((s) => s.toggle);
-  const isOpen = useStreamPanelStore((s) => s.isOpen);
+  const setOpen = useStreamPanelStore((s) => s.setOpen);
   const activeTabId = useStreamPanelStore((s) => s.activeTabId);
 
   const { killJob, closeTab } = useStreamSubscription();
@@ -52,7 +51,7 @@ export function StreamPanelHeader() {
     <div className="border-t border-white/10 bg-zinc-950 flex items-center justify-between border-b border-white/5 h-9 shrink-0">
       <StreamPanelTabs onCloseTab={handleCloseTab} />
 
-      <div className="flex items-center gap-2 px-2">
+      <div className="flex items-center gap-2 px-2 shrink-0">
         {(activeJob?.status === "running" || activeJob?.status === "queued") && (
           <Button
             variant="ghost"
@@ -87,11 +86,12 @@ export function StreamPanelHeader() {
         )}
 
         <button
-          onClick={toggle}
-          aria-label={isOpen ? "Collapse panel" : "Expand panel"}
-          className="p-1 rounded hover:bg-white/5 text-muted-foreground hover:text-foreground transition-colors"
+          onClick={() => setOpen(false)}
+          title="Close the activity log. Research keeps running."
+          className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
         >
-          {isOpen ? <IconChevronDown className="size-4" /> : <IconChevronUp className="size-4" />}
+          <IconX className="size-3.5" />
+          Close
         </button>
       </div>
     </div>

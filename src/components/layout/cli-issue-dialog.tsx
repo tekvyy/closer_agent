@@ -44,7 +44,7 @@ function describeIssue({ provider, kind }: CliIssue, version: string | null): Is
     case "outdated":
       return {
         title: `${cli} couldn't use this model`,
-        description: `${installed} rejected the selected model. Updating ${cli} usually fixes this: click Update, then run the job again. If you already have the newest version, your ${account} account may not have this model; pick another one in the sidebar.`,
+        description: `${installed} rejected the selected model. Updating ${cli} usually fixes this: click Update, then run the job again. If you already have the newest version and it still fails, your ${account} plan may not include the model Closer uses; send us this message.`,
         action: { type: "update", label: "Update" },
       };
     case "update":
@@ -62,7 +62,7 @@ function describeIssue({ provider, kind }: CliIssue, version: string | null): Is
     case "limit":
       return {
         title: `${account} usage limit reached`,
-        description: `Your ${account} account hit its usage limit. Wait for it to reset, or pick a model from the other provider in the sidebar.`,
+        description: `Your ${account} account hit its usage limit. Research starts working again when the limit resets, usually within a few hours; what was already found is kept. If you also have the other kind of AI account, you can switch to it under "${account} account" in the sidebar.`,
       };
   }
 }

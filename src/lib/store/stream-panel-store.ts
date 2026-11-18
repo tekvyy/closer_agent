@@ -86,6 +86,13 @@ export const useStreamPanelStore = create<StreamPanelState>()(
     {
       name: "stream-panel-storage",
       storage: createJSONStorage(() => localStorage),
+      // v1: the log no longer opens by itself, so it starts closed for everyone, including
+      // people whose saved state had it open
+      version: 1,
+      migrate: (persisted) => ({
+        ...(persisted as Partial<StreamPanelState>),
+        isOpen: false,
+      }),
       // Only persist UI state, not logs
       partialize: (state) => ({
         isOpen: state.isOpen,
