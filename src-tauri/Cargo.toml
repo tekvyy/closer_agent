@@ -1,6 +1,6 @@
 [package]
 name = "closer"
-version = "0.3.8"
+version = "0.3.9"
 edition = "2021"
 description = "Closer: lead research and qualification"
 authors = [""]
